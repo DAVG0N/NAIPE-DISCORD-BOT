@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, UserSelectMenuBuilder, EmbedBuilder } = require('discord.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -10,22 +10,21 @@ module.exports = {
 
         // Embed simples com título Recrutamento
         const embed = new EmbedBuilder()
-            .setTitle('Recrutamento')
-            .setDescription('Clica no botão abaixo para propor a entrada de um novo membro na premade.')
-            .setColor('DarkVividPink'); // Ou a cor que preferires
+            .setTitle('🙍・𝖠𝖽𝗂𝖼𝗂𝗈𝗇𝖺𝗋 𝖯𝖾𝗌𝗌𝗈𝖺𝗅')
+            .setDescription('### Propõe a entrada de um novo jogador na premade.\n ・Basta selecionares a pessoa no menu abaixo!\n ・70% da Premade tem de estar de acordo!')
+            .setColor('#313137'); // Ou a cor que preferires
 
-        // Botão btn_propor
+        // Menu Select de Utilizadores
         const row = new ActionRowBuilder()
             .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('btn_propor')
-                    .setLabel('Propor Novo Membro')
-                    .setStyle(ButtonStyle.Primary)
+                new UserSelectMenuBuilder()
+                    .setCustomId('select_candidato')
+                    .setPlaceholder('Seleciona o membro a propor...')
             );
 
         // Envia para o canal onde o admin usou o comando
         await interaction.channel.send({ embeds: [embed], components: [row] });
-        
+
         // Responde de forma efémera ao admin para fechar a interação
         await interaction.editReply({ content: 'Painel criado com sucesso neste canal!' });
     },

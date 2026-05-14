@@ -1,4 +1,4 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, EmbedBuilder } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 
 // Variáveis globais para esta votação única
 let votacaoAtiva = false;
@@ -15,38 +15,33 @@ module.exports = {
     name: 'interactionCreate',
     async execute(interaction) {
 
-        // 1. Lógica do botão inicial (Painel)
-        if (interaction.isButton() && interaction.customId === 'btn_propor') {
+        // 1. Lógica do menu de seleção (Painel)
+        if (interaction.isUserSelectMenu() && interaction.customId === 'select_candidato') {
             if (votacaoAtiva) return interaction.reply({ content: 'Já existe uma votação a decorrer!', ephemeral: true });
 
-            const modal = new ModalBuilder().setCustomId('modal_propor').setTitle('Adicionar à Premade');
-            const inputId = new TextInputBuilder().setCustomId('input_candidato_id').setLabel('Qual é o ID do Discord do candidato?').setStyle(TextInputStyle.Short).setRequired(true);
-            modal.addComponents(new ActionRowBuilder().addComponents(inputId));
-            await interaction.showModal(modal);
-            return;
-        }
-
-        // 2. Lógica de Submissão do Modal
-        if (interaction.isModalSubmit() && interaction.customId === 'modal_propor') {
-            candidatoId = interaction.fields.getTextInputValue('input_candidato_id');
+            candidatoId = interaction.values[0];
             votacaoAtiva = true;
             votosSim = 0;
             votosNao = 0;
             quemJaVotou.clear();
 
             const embedVotacao = new EmbedBuilder()
-                .setTitle('⚖️ Nova Votação de Entrada!')
-                .setDescription(`Alguém propôs o membro <@${candidatoId}> para entrar na premade.\nOs votos são 100% anónimos.`)
-                .setColor('Blue');
+                .setTitle('⚖️・Votação a decorrer!')
+                .setDescription(`### O <@${candidatoId}> foi proposto para entrar na premade.\n・Os votos são feitos no DM com o BOT\n・Os votos são 100% anónimos.\n・Vota Sim ou Não sem medos`)
+                .setColor('#313137');
 
-            const botoes = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('btn_sim').setLabel('Aprovar (Sim)').setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId('btn_nao').setLabel('Rejeitar (Não)').setStyle(ButtonStyle.Danger),
-                new ButtonBuilder().setCustomId('btn_forcar_fim').setLabel('Admin: Forçar Fim').setStyle(ButtonStyle.Secondary)
+            const botoesDM = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('btn_sim').setLabel('✅ Sou a Favor').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId('btn_nao').setLabel('❌ Sou Contra').setStyle(ButtonStyle.Danger)
             );
 
-            await interaction.reply({ embeds: [embedVotacao], components: [botoes] });
-            mensagemVotacao = await interaction.fetchReply();
+            const embedDM = new EmbedBuilder()
+                .setTitle('⚖️・Votação a decorrer!')
+                .setDescription(`### O <@${candidatoId}> foi proposto para entrar na premade.\n・Os votos são **100%** anónimos.\n・Vota **a Favor** ou **Contra** sem medos\n・São precisos **70% de votos** para a pessoa entrar na premade.`)
+                .setColor('#313137');
+
+            await interaction.update({ embeds: [embedVotacao], components: [] });
+            mensagemVotacao = interaction.message;
 
             try {
                 // Previne eventuais rate limits de fetches seguidos
@@ -55,7 +50,12 @@ module.exports = {
                 if (role) {
                     role.members.forEach(async (membro) => {
                         if (!membro.user.bot) {
-                            try { await membro.send(`Alô Malta, temos votação a decorrer para o <@${candidatoId}> entrar na premade.`); } catch (e) { }
+                            try {
+                                await membro.send({
+                                    embeds: [embedDM],
+                                    components: [botoesDM]
+                                });
+                            } catch (e) { }
                         }
                     });
                 }
@@ -65,27 +65,34 @@ module.exports = {
             return;
         }
 
-        // 3. Lógica dos botões de votar e forçar fim
-        if (interaction.isButton() && (interaction.customId === 'btn_sim' || interaction.customId === 'btn_nao' || interaction.customId === 'btn_forcar_fim')) {
+        // 3. Lógica dos botões de votar na DM
+        if (interaction.isButton() && (interaction.customId === 'btn_sim' || interaction.customId === 'btn_nao')) {
             if (!votacaoAtiva) return interaction.reply({ content: 'Esta votação já terminou.', ephemeral: true });
 
-            if (interaction.customId === 'btn_forcar_fim') {
-                if (interaction.user.id !== TEU_ID_ADMIN) return interaction.reply({ content: 'Só o admin pode forçar o fim da votação!', ephemeral: true });
-                await interaction.reply({ content: 'Forçaste o fim da votação.', ephemeral: true });
-                return encerrarVotacao(interaction.guild);
+            // O botão foi carregado na DM, logo interaction.guild é null.
+            // Precisamos do guild para verificar o cargo e para contar os votos.
+            const guild = interaction.guild || mensagemVotacao.guild;
+
+            const member = await guild.members.fetch(interaction.user.id).catch(() => null);
+            if (!member || !member.roles.cache.has(ROLE_PREMADE_ID)) {
+                return interaction.reply({ content: 'Só quem está na premade pode votar.', ephemeral: true });
             }
 
-            if (!interaction.member.roles.cache.has(ROLE_PREMADE_ID)) return interaction.reply({ content: 'Só quem já está na premade pode votar.', ephemeral: true });
             if (quemJaVotou.has(interaction.user.id)) return interaction.reply({ content: 'Já votaste nesta pessoa! Não tentes aldrabar.', ephemeral: true });
 
             quemJaVotou.add(interaction.user.id);
             if (interaction.customId === 'btn_sim') votosSim++;
             if (interaction.customId === 'btn_nao') votosNao++;
 
-            await interaction.reply({ content: '✅ O teu voto anónimo foi registado com sucesso.', ephemeral: true });
+            // Na DM usamos update para limpar os botões para o user perceber que votou
+            if (!interaction.guild) {
+                await interaction.update({ content: '✅ O teu voto anónimo foi registado com sucesso.', components: [] });
+            } else {
+                await interaction.reply({ content: '✅ O teu voto anónimo foi registado com sucesso.', ephemeral: true });
+            }
 
             try {
-                const rolePremade = interaction.guild.roles.cache.get(ROLE_PREMADE_ID);
+                const rolePremade = guild.roles.cache.get(ROLE_PREMADE_ID);
                 if (!rolePremade) return;
 
                 const totalVotantes = rolePremade.members.filter(m => !m.user.bot).size;
@@ -94,7 +101,7 @@ module.exports = {
                 console.log(`\n--- STATUS DA VOTAÇÃO ---`);
                 console.log(`Votos Sim: ${votosSim} | Votos Não: ${votosNao} | Total Votantes: ${totalVotantes} | Registados: ${votosTotais}`);
 
-                if (votosTotais >= totalVotantes) encerrarVotacao(interaction.guild);
+                if (votosTotais >= totalVotantes) encerrarVotacao(guild);
             } catch (e) {
                 console.error("Erro a contabilizar votos:", e);
             }
@@ -103,6 +110,18 @@ module.exports = {
 
         // 4. Execução normal dos slash commands (NÃO APAGAR ESTA PARTE)
         if (interaction.isChatInputCommand()) {
+            
+            // Apanhar o comando /ffv localmente para ter acesso ao estado
+            if (interaction.commandName === 'ffv') {
+                if (interaction.user.id !== TEU_ID_ADMIN) return interaction.reply({ content: 'Só o admin pode forçar o fim da votação!', ephemeral: true });
+                if (!votacaoAtiva) return interaction.reply({ content: 'Não há nenhuma votação ativa para terminar.', ephemeral: true });
+                
+                await interaction.reply({ content: 'Forçaste o fim da votação.', ephemeral: true });
+                const guild = interaction.guild || (mensagemVotacao ? mensagemVotacao.guild : null);
+                if (guild) return encerrarVotacao(guild);
+                return;
+            }
+
             const command = interaction.client.commands.get(interaction.commandName);
             if (!command) {
                 console.error(`Nenhum comando com o nome ${interaction.commandName} foi encontrado.`);

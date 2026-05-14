@@ -19,7 +19,7 @@ const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('
 for (const file of commandFiles) {
     const filePath = path.join(commandsPath, file);
     const command = require(filePath);
-    
+
     // Verifica se os comandos exportam as propriedades obrigatórias
     if ('data' in command && 'execute' in command) {
         client.commands.set(command.data.name, command);
@@ -29,8 +29,8 @@ for (const file of commandFiles) {
 }
 
 // Evento quando o bot estiver online
-client.once('ready', () => {
-    console.log(`O NAIPE está online e a dar cartas! Logado como ${client.user.tag}`);
+client.once('clientReady', () => {
+    console.log(`O NAIPE está online e a dar cartas!♠️  Logado como ${client.user.tag} ♦️`);
 });
 
 // Lê os ficheiros da pasta "events"
@@ -40,7 +40,7 @@ const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'
 for (const file of eventFiles) {
     const filePath = path.join(eventsPath, file);
     const event = require(filePath);
-    
+
     if (event.once) {
         client.once(event.name, (...args) => event.execute(...args));
     } else {
