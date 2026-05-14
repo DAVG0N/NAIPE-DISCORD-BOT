@@ -2,11 +2,11 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-
 // Inicializa o cliente com as intents necessárias
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers, // Necessário para listar os membros do Role e enviar DMs
     ],
 });
 
@@ -33,28 +33,20 @@ client.once('ready', () => {
     console.log(`O NAIPE está online e a dar cartas! Logado como ${client.user.tag}`);
 });
 
-// Listener para interações de comandos slash
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
+// Lê os ficheiros da pasta "events"
+const eventsPath = path.join(__dirname, 'events');
+const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
 
-    const command = interaction.client.commands.get(interaction.commandName);
-
-    if (!command) {
-        console.error(`Nenhum comando com o nome ${interaction.commandName} foi encontrado.`);
-        return;
+for (const file of eventFiles) {
+    const filePath = path.join(eventsPath, file);
+    const event = require(filePath);
+    
+    if (event.once) {
+        client.once(event.name, (...args) => event.execute(...args));
+    } else {
+        client.on(event.name, (...args) => event.execute(...args));
     }
-
-    try {
-        await command.execute(interaction);
-    } catch (error) {
-        console.error(error);
-        if (interaction.replied || interaction.deferred) {
-            await interaction.followUp({ content: 'Ocorreu um erro ao executar este comando!', ephemeral: true });
-        } else {
-            await interaction.reply({ content: 'Ocorreu um erro ao executar este comando!', ephemeral: true });
-        }
-    }
-});
+}
 
 // Faz login usando o token do .env
 client.login(process.env.DISCORD_TOKEN);
