@@ -1,4 +1,5 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, UserSelectMenuBuilder } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { getLeaderboard, saveLeaderboard } = require('../commands/leaderboard.js');
 
 // Variáveis globais para esta votação única
 let votacaoAtiva = false;
@@ -15,6 +16,165 @@ const CANAL_BOAS_VINDAS_ID = '1504558308474884167'; // <-- COLOCA AQUI O ID DO T
 module.exports = {
     name: 'interactionCreate',
     async execute(interaction) {
+
+        // ==========================================
+        // Lógica de Adição Automática de Faceit
+        // ==========================================
+        if (interaction.isButton() && interaction.customId.startsWith('btn_add_faceit_')) {
+            const parts = interaction.customId.split('_');
+            const candidatoId = parts[3];
+            const msgId = parts[4];
+
+            const modal = new ModalBuilder()
+                .setCustomId(`modal_add_faceit_${candidatoId}_${msgId}`)
+                .setTitle('Associar Conta Faceit');
+
+            const nickInput = new TextInputBuilder()
+                .setCustomId('faceit_nick')
+                .setLabel("O teu Nickname na Faceit:")
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true);
+
+            modal.addComponents(new ActionRowBuilder().addComponents(nickInput));
+            await interaction.showModal(modal);
+            return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('btn_call_admin_')) {
+            const parts = interaction.customId.split('_');
+            const candidatoId = parts[3];
+            const msgId = parts[4];
+
+            const newRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder().setCustomId(`btn_add_faceit_${candidatoId}_${msgId}`).setLabel('Adicionar Nick Faceit').setStyle(ButtonStyle.Primary).setDisabled(true),
+                    new ButtonBuilder().setCustomId(`btn_call_admin_${candidatoId}_${msgId}`).setLabel('Pedido Enviado!').setStyle(ButtonStyle.Secondary).setDisabled(true)
+                );
+            await interaction.update({ components: [newRow] });
+            
+            try {
+                const admin = await interaction.client.users.fetch(TEU_ID_ADMIN);
+                if (admin) {
+                    const rowAdmin = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`btn_admin_reactivate_${candidatoId}_${msgId}_${interaction.user.id}`)
+                            .setLabel('Reativar Botão do Utilizador')
+                            .setStyle(ButtonStyle.Success)
+                    );
+                    await admin.send({
+                        content: `🚨 **Pedido de Ajuda Faceit** 🚨\nO utilizador <@${interaction.user.id}> precisa de ajuda para associar a sua conta Faceit (Tempo expirou ou falhou no Nick).\n\nClica no botão para lhe dares mais uma tentativa de inserir o nome.`,
+                        components: [rowAdmin]
+                    });
+                }
+            } catch (e) {
+                console.error("Erro a contactar admin:", e);
+            }
+            return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('btn_admin_reactivate_')) {
+            if (interaction.user.id !== TEU_ID_ADMIN) return interaction.reply({ content: 'Não tens permissão.', ephemeral: true });
+            const parts = interaction.customId.split('_');
+            const candidatoId = parts[3];
+            const msgId = parts[4];
+            const userId = parts[5];
+
+            await interaction.deferUpdate();
+
+            try {
+                const user = await interaction.client.users.fetch(userId);
+                const dmChannel = await user.createDM();
+                const faceitMsg = await dmChannel.messages.fetch(msgId);
+                
+                const reactivatedRow = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder().setCustomId(`btn_add_faceit_${candidatoId}_${msgId}`).setLabel('Adicionar Nick Faceit').setStyle(ButtonStyle.Primary).setDisabled(false),
+                        new ButtonBuilder().setCustomId(`btn_call_admin_${candidatoId}_${msgId}`).setLabel('Pedir Ajuda ao Admin').setStyle(ButtonStyle.Danger).setDisabled(true)
+                    );
+                
+                await faceitMsg.edit({ components: [reactivatedRow], content: '' });
+                
+                setTimeout(async () => {
+                    try {
+                        const currentMsg = await dmChannel.messages.fetch(msgId);
+                        if (currentMsg.components[0].components[0].disabled === false) {
+                            const timeoutRow = new ActionRowBuilder().addComponents(
+                                new ButtonBuilder().setCustomId(`btn_add_faceit_${candidatoId}_${msgId}`).setLabel('Adicionar Nick Faceit').setStyle(ButtonStyle.Primary).setDisabled(true),
+                                new ButtonBuilder().setCustomId(`btn_call_admin_${candidatoId}_${msgId}`).setLabel('Pedir Ajuda ao Admin').setStyle(ButtonStyle.Danger).setDisabled(false)
+                            );
+                            await currentMsg.edit({ components: [timeoutRow] });
+                        }
+                    } catch (e) {}
+                }, 3 * 60 * 60 * 1000);
+
+                await interaction.followUp({ content: `✅ Botão reativado com sucesso na DM do utilizador <@${userId}>.`, ephemeral: true });
+            } catch (e) {
+                console.error("Erro a reativar botão:", e);
+                await interaction.followUp({ content: `❌ Não consegui encontrar a mensagem ou utilizador para reativar o botão.`, ephemeral: true });
+            }
+            return;
+        }
+
+        if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_add_faceit_')) {
+            await interaction.deferUpdate();
+            
+            const parts = interaction.customId.split('_');
+            const candidatoId = parts[3];
+            const msgId = parts[4];
+            const nick = interaction.fields.getTextInputValue('faceit_nick');
+            
+            const apiKey = process.env.FACEIT_API_KEY;
+            
+            async function disableAndAskHelp(errorMsg) {
+                const errRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`btn_add_faceit_${candidatoId}_${msgId}`).setLabel('Adicionar Nick Faceit').setStyle(ButtonStyle.Primary).setDisabled(true),
+                    new ButtonBuilder().setCustomId(`btn_call_admin_${candidatoId}_${msgId}`).setLabel('Pedir Ajuda ao Admin').setStyle(ButtonStyle.Danger).setDisabled(false)
+                );
+                try {
+                    await interaction.message.edit({
+                        content: `❌ **Erro:** ${errorMsg}\nClica no botão de ajuda em baixo para o Admin intervir.`,
+                        components: [errRow]
+                    });
+                } catch(e) {}
+            }
+
+            if (!apiKey) return disableAndAskHelp("A chave de API do BOT não está configurada.");
+
+            const leaderboard = getLeaderboard();
+            if (leaderboard.find(p => p.nickname.toLowerCase() === nick.toLowerCase())) {
+                return disableAndAskHelp(`O jogador **${nick}** já está na leaderboard.`);
+            }
+
+            try {
+                const playerResponse = await fetch(`https://open.faceit.com/data/v4/players?nickname=${nick}`, {
+                    headers: { 'Authorization': `Bearer ${apiKey}` }
+                });
+
+                if (playerResponse.status === 404) return disableAndAskHelp(`Não foi possível encontrar o jogador **${nick}** na Faceit.`);
+                if (!playerResponse.ok) return disableAndAskHelp(`Erro da API da Faceit (Status: ${playerResponse.status}).`);
+
+                const playerData = await playerResponse.json();
+                
+                if (!playerData.games?.cs2) return disableAndAskHelp(`O jogador **${nick}** não tem perfil de CS2 registado.`);
+
+                leaderboard.push({
+                    nickname: playerData.nickname,
+                    player_id: playerData.player_id
+                });
+                saveLeaderboard(leaderboard);
+
+                const embedSuccess = EmbedBuilder.from(interaction.message.embeds[0])
+                    .setDescription(`✅ Conta associada com sucesso ao nickname **${playerData.nickname}**!\nEstás agora na nossa Leaderboard oficial.`)
+                    .setColor('Green');
+                    
+                await interaction.message.edit({ embeds: [embedSuccess], components: [], content: '' });
+
+            } catch (error) {
+                console.error(error);
+                return disableAndAskHelp("Ocorreu um erro interno a verificar o teu nome.");
+            }
+            return;
+        }
 
         // 1. Lógica do menu de seleção (Painel)
         if (interaction.isUserSelectMenu() && interaction.customId === 'select_candidato') {
@@ -210,6 +370,39 @@ async function encerrarVotacao(guild) {
                     await canalBoasVindas.send({ content: `Bem-vindo(a), <@${candidatoId}>!`, embeds: [embedBoasVindas] });
                 } else {
                     console.log("Aviso: O Canal de Boas Vindas não foi encontrado. Verifica o ID configurado!");
+                }
+                
+                // Pedido Faceit na DM do Candidato
+                try {
+                    const embedFaceit = new EmbedBuilder()
+                        .setTitle('🎮 Associa a tua conta Faceit!')
+                        .setDescription('Parabéns pela aprovação! Precisamos do teu Nick da Faceit para te adicionar à Leaderboard da equipa.\n\nClica no botão "Adicionar Nick" abaixo. Tens **3 horas** para o fazer.\n\n*Se te enganares ou passar o tempo, clica no botão de Ajuda.*')
+                        .setColor('#FF5500');
+
+                    const faceitMsg = await membroCandidato.send({ embeds: [embedFaceit] });
+                    
+                    const rowFaceit = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder().setCustomId(`btn_add_faceit_${candidatoId}_${faceitMsg.id}`).setLabel('Adicionar Nick Faceit').setStyle(ButtonStyle.Primary),
+                            new ButtonBuilder().setCustomId(`btn_call_admin_${candidatoId}_${faceitMsg.id}`).setLabel('Pedir Ajuda ao Admin').setStyle(ButtonStyle.Danger).setDisabled(true)
+                        );
+                    await faceitMsg.edit({ components: [rowFaceit] });
+                    
+                    // Timer de 3 horas (10800000 ms)
+                    setTimeout(async () => {
+                        try {
+                            const currentMsg = await faceitMsg.fetch();
+                            if (currentMsg.components[0].components[0].disabled === false) {
+                                const timeoutRow = new ActionRowBuilder().addComponents(
+                                    new ButtonBuilder().setCustomId(`btn_add_faceit_${candidatoId}_${faceitMsg.id}`).setLabel('Adicionar Nick Faceit').setStyle(ButtonStyle.Primary).setDisabled(true),
+                                    new ButtonBuilder().setCustomId(`btn_call_admin_${candidatoId}_${faceitMsg.id}`).setLabel('Pedir Ajuda ao Admin').setStyle(ButtonStyle.Danger).setDisabled(false)
+                                );
+                                await faceitMsg.edit({ components: [timeoutRow] });
+                            }
+                        } catch (e) {}
+                    }, 3 * 60 * 60 * 1000);
+                } catch (e) {
+                    console.error("Erro a enviar pedido Faceit ao candidato:", e);
                 }
             }
         } catch (error) {
