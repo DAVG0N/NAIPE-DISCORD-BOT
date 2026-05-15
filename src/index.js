@@ -2,6 +2,8 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const { updateLeaderboardMessage } = require('./commands/leaderboard.js');
+const { setupWebhooks } = require('./webhooks.js');
 // Inicializa o cliente com as intents necessárias
 const client = new Client({
     intents: [
@@ -29,8 +31,16 @@ for (const file of commandFiles) {
 }
 
 // Evento quando o bot estiver online
-client.once('clientReady', () => {
+client.once('ready', () => {
     console.log(`O NAIPE está online e a dar cartas!♠️  Logado como ${client.user.tag} ♦️`);
+    
+    // Inicializa o servidor Express para receber os Webhooks da Faceit
+    setupWebhooks(client);
+    
+    // Intervalo de 1 hora para atualizar a leaderboard
+    setInterval(() => {
+        updateLeaderboardMessage(client);
+    }, 60 * 60 * 1000);
 });
 
 // Lê os ficheiros da pasta "events"

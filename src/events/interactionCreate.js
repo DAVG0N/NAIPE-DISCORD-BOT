@@ -1,5 +1,5 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
-const { getLeaderboard, saveLeaderboard } = require('../commands/leaderboard.js');
+const { getLeaderboard, saveLeaderboard, updateLeaderboardMessage } = require('../commands/leaderboard.js');
 
 // Variáveis globais para esta votação única
 let votacaoAtiva = false;
@@ -168,6 +168,9 @@ module.exports = {
                     .setColor('Green');
                     
                 await interaction.message.edit({ embeds: [embedSuccess], components: [], content: '' });
+                
+                // Força atualização da mensagem âncora da leaderboard no canal
+                await updateLeaderboardMessage(interaction.client);
 
             } catch (error) {
                 console.error(error);
