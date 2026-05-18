@@ -18,7 +18,7 @@ const faceitEmojis = {
 
 // Caminhos
 const dataDir = path.join(__dirname, '../../data');
-const dataFile = path.join(dataDir, 'leaderboard.json');
+const dataFile = path.join(dataDir, 'bd.json');
 const configFile = path.join(dataDir, 'leaderboard_config.json');
 
 // Garante que a pasta e o ficheiro existem
@@ -170,10 +170,10 @@ module.exports = {
         const subcommand = interaction.options.getSubcommand();
         const apiKey = process.env.FACEIT_API_KEY;
 
-        if (!apiKey) return interaction.reply({ content: '❌ **Erro**: A chave de API da FACEIT não está configurada.', ephemeral: true });
+        if (!apiKey) return interaction.reply({ content: '❌ **Erro**: A chave de API da FACEIT não está configurada.', flags: 64 });
 
         if (subcommand === 'adicionar') {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: 64 });
             const nick = interaction.options.getString('nick');
             const leaderboard = getLeaderboard();
 
@@ -207,18 +207,37 @@ module.exports = {
             const leaderboard = getLeaderboard();
             
             const index = leaderboard.findIndex(p => p.nickname.toLowerCase() === nick.toLowerCase());
-            if (index === -1) return interaction.reply({ content: `⚠️ O jogador **${nick}** não está na leaderboard.`, ephemeral: true });
+            if (index === -1) return interaction.reply({ content: `⚠️ O jogador **${nick}** não está na leaderboard.`, flags: 64 });
 
+            const entry = leaderboard[index];
             leaderboard.splice(index, 1);
             saveLeaderboard(leaderboard);
+            console.log(`[Leaderboard] Removido via /leaderboard remover — nick: ${entry.nickname} | discord_id: ${entry.discord_id || 'sem discord_id'}`);
 
-            await interaction.reply({ content: `🗑️ O jogador **${nick}** foi removido da leaderboard.`, ephemeral: true });
+            let cargoRemovido = false;
+            if (entry.discord_id) {
+                try {
+                    const member = await interaction.guild.members.fetch(entry.discord_id).catch(() => null);
+                    if (member && member.roles.cache.has('1504240255296081920')) {
+                        await member.roles.remove('1504240255296081920');
+                        cargoRemovido = true;
+                        console.log(`[Leaderboard] Cargo de premade removido a <@${entry.discord_id}> ao remover ${entry.nickname} da leaderboard.`);
+                    }
+                } catch (e) {
+                    console.error(`Erro a remover cargo de premade ao remover ${nick} da leaderboard:`, e);
+                }
+            }
+
+            const msg = cargoRemovido
+                ? `🗑️ O jogador **${nick}** foi removido da leaderboard e o cargo de premade foi retirado a <@${entry.discord_id}>.`
+                : `🗑️ O jogador **${nick}** foi removido da leaderboard.${entry.discord_id ? ' *(Cargo não encontrado ou já não tinha)*' : ''}`;
+
+            await interaction.reply({ content: msg, flags: 64 });
             
-            // Atualizar a mensagem âncora
             await updateLeaderboardMessage(interaction.client);
         } 
         else if (subcommand === 'mostrar') {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: 64 });
             
             const initEmbed = new EmbedBuilder()
                 .setTitle('🏆 ・Leaderboard ')
@@ -235,7 +254,7 @@ module.exports = {
             await updateLeaderboardMessage(interaction.client);
         }
         else if (subcommand === 'forcereload') {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: 64 });
             
             const config = getLeaderboardConfig();
             if (!config || !config.channelId) {

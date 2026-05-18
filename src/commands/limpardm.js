@@ -5,7 +5,7 @@ module.exports = {
         .setName('limpardm')
         .setDescription('Comando útil para testes: O bot apaga as suas próprias mensagens na tua DM.'),
     async execute(interaction) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: 64 });
 
         try {
             // Abre (ou obtém) o canal de DM com quem usou o comando

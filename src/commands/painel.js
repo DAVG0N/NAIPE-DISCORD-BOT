@@ -6,7 +6,7 @@ module.exports = {
         .setDescription('Comando para admins: Cria o painel de recrutamento para a premade.'),
     async execute(interaction) {
         // Apenas para não deixar o comando a pensar eternamente caso demore
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: 64 });
 
         // Embed simples com título Recrutamento
         const embed = new EmbedBuilder()

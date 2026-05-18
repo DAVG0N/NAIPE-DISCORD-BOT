@@ -31,7 +31,7 @@ for (const file of commandFiles) {
 }
 
 // Evento quando o bot estiver online
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`O NAIPE está online e a dar cartas!♠️  Logado como ${client.user.tag} ♦️`);
     
     // Inicializa o servidor Express para receber os Webhooks da Faceit

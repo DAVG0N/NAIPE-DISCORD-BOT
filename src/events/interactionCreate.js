@@ -24,6 +24,7 @@ module.exports = {
             const parts = interaction.customId.split('_');
             const candidatoId = parts[3];
             const msgId = parts[4];
+            console.log(`[Faceit] ${interaction.user.tag} abriu o modal de associação Faceit (discord_id: ${candidatoId})`);
 
             const modal = new ModalBuilder()
                 .setCustomId(`modal_add_faceit_${candidatoId}_${msgId}`)
@@ -35,7 +36,16 @@ module.exports = {
                 .setStyle(TextInputStyle.Short)
                 .setRequired(true);
 
-            modal.addComponents(new ActionRowBuilder().addComponents(nickInput));
+            const idInput = new TextInputBuilder()
+                .setCustomId('faceit_id')
+                .setLabel("(Opcional) ID da Faceit:")
+                .setStyle(TextInputStyle.Short)
+                .setRequired(false);
+
+            modal.addComponents(
+                new ActionRowBuilder().addComponents(nickInput),
+                new ActionRowBuilder().addComponents(idInput)
+            );
             await interaction.showModal(modal);
             return;
         }
@@ -44,6 +54,7 @@ module.exports = {
             const parts = interaction.customId.split('_');
             const candidatoId = parts[3];
             const msgId = parts[4];
+            console.log(`[Faceit] ${interaction.user.tag} pediu ajuda ao admin para associar Faceit (discord_id: ${candidatoId})`);
 
             const newRow = new ActionRowBuilder()
                 .addComponents(
@@ -73,7 +84,10 @@ module.exports = {
         }
 
         if (interaction.isButton() && interaction.customId.startsWith('btn_admin_reactivate_')) {
-            if (interaction.user.id !== TEU_ID_ADMIN) return interaction.reply({ content: 'Não tens permissão.', ephemeral: true });
+            if (interaction.user.id !== TEU_ID_ADMIN) {
+                console.log(`[Faceit] ACESSO NEGADO: ${interaction.user.tag} tentou reativar botão sem ser admin.`);
+                return interaction.reply({ content: 'Não tens permissão.', flags: 64 });
+            }
             const parts = interaction.customId.split('_');
             const candidatoId = parts[3];
             const msgId = parts[4];
@@ -107,10 +121,11 @@ module.exports = {
                     } catch (e) {}
                 }, 3 * 60 * 60 * 1000);
 
-                await interaction.followUp({ content: `✅ Botão reativado com sucesso na DM do utilizador <@${userId}>.`, ephemeral: true });
+                console.log(`[Faceit] Admin reativou o botão de Faceit para o utilizador ${userId}.`);
+                await interaction.followUp({ content: `✅ Botão reativado com sucesso na DM do utilizador <@${userId}>.`, flags: 64 });
             } catch (e) {
                 console.error("Erro a reativar botão:", e);
-                await interaction.followUp({ content: `❌ Não consegui encontrar a mensagem ou utilizador para reativar o botão.`, ephemeral: true });
+                await interaction.followUp({ content: `❌ Não consegui encontrar a mensagem ou utilizador para reativar o botão.`, flags: 64 });
             }
             return;
         }
@@ -122,6 +137,7 @@ module.exports = {
             const candidatoId = parts[3];
             const msgId = parts[4];
             const nick = interaction.fields.getTextInputValue('faceit_nick');
+            const faceitIdManual = interaction.fields.getTextInputValue('faceit_id').trim();
             
             const apiKey = process.env.FACEIT_API_KEY;
             
@@ -138,12 +154,31 @@ module.exports = {
                 } catch(e) {}
             }
 
-            if (!apiKey) return disableAndAskHelp("A chave de API do BOT não está configurada.");
-
+            console.log(`[Faceit] ${interaction.user.tag} submeteu modal — nick: "${nick}" | id manual: "${faceitIdManual || 'nenhum'}"`);
             const leaderboard = getLeaderboard();
             if (leaderboard.find(p => p.nickname.toLowerCase() === nick.toLowerCase())) {
+                console.log(`[Faceit] Rejeitado: nick "${nick}" já existe na leaderboard.`);
                 return disableAndAskHelp(`O jogador **${nick}** já está na leaderboard.`);
             }
+
+            // Se o utilizador forneceu o ID manualmente, usamos diretamente sem API
+            if (faceitIdManual) {
+                if (leaderboard.find(p => p.player_id === faceitIdManual)) {
+                    return disableAndAskHelp(`O ID Faceit **${faceitIdManual}** já está registado na leaderboard.`);
+                }
+                leaderboard.push({ nickname: nick, player_id: faceitIdManual, discord_id: candidatoId });
+                saveLeaderboard(leaderboard);
+                console.log(`[Leaderboard] Adicionado via ID manual — nick: ${nick} | player_id: ${faceitIdManual} | discord_id: ${candidatoId}`);
+
+                const embedSuccess = EmbedBuilder.from(interaction.message.embeds[0])
+                    .setDescription(`✅ Conta associada com sucesso!\n**Nick:** ${nick}\n**ID:** \`${faceitIdManual}\`\nEstás agora na nossa Leaderboard oficial.`)
+                    .setColor('Green');
+                await interaction.message.edit({ embeds: [embedSuccess], components: [], content: '' });
+                await updateLeaderboardMessage(interaction.client);
+                return;
+            }
+
+            if (!apiKey) return disableAndAskHelp("A chave de API do BOT não está configurada. Pede ao admin para inserir o teu ID Faceit manualmente.");
 
             try {
                 const playerResponse = await fetch(`https://open.faceit.com/data/v4/players?nickname=${nick}`, {
@@ -159,9 +194,11 @@ module.exports = {
 
                 leaderboard.push({
                     nickname: playerData.nickname,
-                    player_id: playerData.player_id
+                    player_id: playerData.player_id,
+                    discord_id: candidatoId
                 });
                 saveLeaderboard(leaderboard);
+                console.log(`[Leaderboard] Adicionado via API — nick: ${playerData.nickname} | player_id: ${playerData.player_id} | discord_id: ${candidatoId}`);
 
                 const embedSuccess = EmbedBuilder.from(interaction.message.embeds[0])
                     .setDescription(`✅ Conta associada com sucesso ao nickname **${playerData.nickname}**!\nEstás agora na nossa Leaderboard oficial.`)
@@ -169,7 +206,6 @@ module.exports = {
                     
                 await interaction.message.edit({ embeds: [embedSuccess], components: [], content: '' });
                 
-                // Força atualização da mensagem âncora da leaderboard no canal
                 await updateLeaderboardMessage(interaction.client);
 
             } catch (error) {
@@ -181,13 +217,17 @@ module.exports = {
 
         // 1. Lógica do menu de seleção (Painel)
         if (interaction.isUserSelectMenu() && interaction.customId === 'select_candidato') {
-            if (votacaoAtiva) return interaction.reply({ content: 'Já existe uma votação a decorrer!', ephemeral: true });
+            if (votacaoAtiva) {
+                console.log(`[Votação] ${interaction.user.tag} tentou iniciar votação mas já existe uma a decorrer.`);
+                return interaction.reply({ content: 'Já existe uma votação a decorrer!', flags: 64 });
+            }
 
             candidatoId = interaction.values[0];
             votacaoAtiva = true;
             votosSim = 0;
             votosNao = 0;
             quemJaVotou.clear();
+            console.log(`[Votação] ${interaction.user.tag} iniciou votação para o candidato discord_id: ${candidatoId}`);
 
             const embedVotacao = new EmbedBuilder()
                 .setTitle('⚖️・Votação a decorrer!')
@@ -231,7 +271,7 @@ module.exports = {
 
         // 3. Lógica dos botões de votar na DM
         if (interaction.isButton() && (interaction.customId === 'btn_sim' || interaction.customId === 'btn_nao')) {
-            if (!votacaoAtiva) return interaction.reply({ content: 'Esta votação já terminou.', ephemeral: true });
+            if (!votacaoAtiva) return interaction.reply({ content: 'Esta votação já terminou.', flags: 64 });
 
             // O botão foi carregado na DM, logo interaction.guild é null.
             // Precisamos do guild para verificar o cargo e para contar os votos.
@@ -239,14 +279,15 @@ module.exports = {
 
             const member = await guild.members.fetch(interaction.user.id).catch(() => null);
             if (!member || !member.roles.cache.has(ROLE_PREMADE_ID)) {
-                return interaction.reply({ content: 'Só quem está na premade pode votar.', ephemeral: true });
+                return interaction.reply({ content: 'Só quem está na premade pode votar.', flags: 64 });
             }
 
-            if (quemJaVotou.has(interaction.user.id)) return interaction.reply({ content: 'Já votaste nesta pessoa! Não tentes aldrabar.', ephemeral: true });
+            if (quemJaVotou.has(interaction.user.id)) return interaction.reply({ content: 'Já votaste nesta pessoa! Não tentes aldrabar.', flags: 64 });
 
             quemJaVotou.add(interaction.user.id);
             if (interaction.customId === 'btn_sim') votosSim++;
             if (interaction.customId === 'btn_nao') votosNao++;
+            console.log(`[Votação] ${interaction.user.tag} votou ${interaction.customId === 'btn_sim' ? 'A FAVOR' : 'CONTRA'} | Sim: ${votosSim} | Não: ${votosNao}`);
 
             const votoTexto = interaction.customId === 'btn_sim' ? 'a Favor' : 'Contra';
 
@@ -258,7 +299,7 @@ module.exports = {
                     .setColor('#313137');
                 await interaction.update({ content: '', embeds: [embedVotoRegistado], components: [] });
             } else {
-                await interaction.reply({ content: `✅ O teu voto anónimo (${votoTexto}) foi registado com sucesso.`, ephemeral: true });
+                await interaction.reply({ content: `✅ O teu voto anónimo (${votoTexto}) foi registado com sucesso.`, flags: 64 });
             }
 
             try {
@@ -292,13 +333,14 @@ module.exports = {
 
         // 4. Execução normal dos slash commands (NÃO APAGAR ESTA PARTE)
         if (interaction.isChatInputCommand()) {
+            console.log(`[Comando] /${interaction.commandName} usado por ${interaction.user.tag} (${interaction.user.id}) em #${interaction.channel?.name || 'DM'}`);
 
             // Apanhar o comando /ffv localmente para ter acesso ao estado
             if (interaction.commandName === 'ffv') {
-                if (interaction.user.id !== TEU_ID_ADMIN) return interaction.reply({ content: 'Só o admin pode forçar o fim da votação!', ephemeral: true });
-                if (!votacaoAtiva) return interaction.reply({ content: 'Não há nenhuma votação ativa para terminar.', ephemeral: true });
+                if (interaction.user.id !== TEU_ID_ADMIN) return interaction.reply({ content: 'Só o admin pode forçar o fim da votação!', flags: 64 });
+                if (!votacaoAtiva) return interaction.reply({ content: 'Não há nenhuma votação ativa para terminar.', flags: 64 });
 
-                await interaction.reply({ content: 'Forçaste o fim da votação.', ephemeral: true });
+                await interaction.reply({ content: 'Forçaste o fim da votação.', flags: 64 });
                 const guild = interaction.guild || (mensagemVotacao ? mensagemVotacao.guild : null);
                 if (guild) return encerrarVotacao(guild);
                 return;
@@ -315,9 +357,9 @@ module.exports = {
             } catch (error) {
                 console.error(error);
                 if (interaction.replied || interaction.deferred) {
-                    await interaction.followUp({ content: 'Ocorreu um erro ao executar este comando!', ephemeral: true });
+                    await interaction.followUp({ content: 'Ocorreu um erro ao executar este comando!', flags: 64 });
                 } else {
-                    await interaction.reply({ content: 'Ocorreu um erro ao executar este comando!', ephemeral: true });
+                    await interaction.reply({ content: 'Ocorreu um erro ao executar este comando!', flags: 64 });
                 }
             }
         }
@@ -326,6 +368,7 @@ module.exports = {
 
 async function encerrarVotacao(guild) {
     votacaoAtiva = false;
+    console.log(`[Votação] A encerrar votação para discord_id: ${candidatoId} | Sim: ${votosSim} | Não: ${votosNao}`);
 
     // Obter o tamanho total da equipa para contas exatas
     let totalVotantes = votosSim + votosNao; // Fallback
@@ -336,6 +379,7 @@ async function encerrarVotacao(guild) {
 
     const percentagem = totalVotantes === 0 ? 0 : (votosSim / totalVotantes) * 100;
     const aprovado = percentagem >= 70;
+    console.log(`[Votação] Resultado: ${aprovado ? 'APROVADO ✅' : 'REJEITADO ❌'} | ${percentagem.toFixed(1)}% aprovação (mínimo: 70%)`);
 
     const embedFinalDM = new EmbedBuilder()
         .setTitle('⚖️・Votação terminada!')
@@ -360,6 +404,7 @@ async function encerrarVotacao(guild) {
             const membroCandidato = await guild.members.fetch(candidatoId);
             if (membroCandidato) {
                 await membroCandidato.roles.add(ROLE_PREMADE_ID);
+                console.log(`[Votação] Cargo de premade atribuído a ${membroCandidato.user.tag} (${candidatoId}).`);
 
                 // Mensagem de Boas Vindas no Canal Público
                 const canalBoasVindas = guild.channels.cache.get(CANAL_BOAS_VINDAS_ID);

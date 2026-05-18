@@ -1,13 +1,20 @@
 const express = require('express');
 const { EmbedBuilder } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
 
-// Adiciona aqui os IDs dos jogadores da tua premade na Faceit
-// Podes encontrar o ID na URL do perfil do jogador ou através da API da Faceit
-const PREMADE_FACEIT_IDS = [
-    '72c74380-ff90-4633-bae0-6fdb6d102031',
-    'id_faceit_ficticio_2',
-    'id_faceit_ficticio_3'
-];
+const LEADERBOARD_FILE = path.join(__dirname, '../data/bd.json');
+
+function getPremadeIds() {
+    try {
+        if (!fs.existsSync(LEADERBOARD_FILE)) return [];
+        const data = JSON.parse(fs.readFileSync(LEADERBOARD_FILE, 'utf-8'));
+        return data.map(p => p.player_id).filter(Boolean);
+    } catch (e) {
+        console.error('[Faceit Webhook] Erro a ler bd.json:', e);
+        return [];
+    }
+}
 
 function setupWebhooks(client) {
     const app = express();
@@ -35,9 +42,10 @@ function setupWebhooks(client) {
             ];
 
             // Verifica se algum jogador na partida faz parte da nossa premade
+            const premadeIds = getPremadeIds();
             const premadeInMatch = allPlayers.filter(player =>
-                PREMADE_FACEIT_IDS.includes(player.id) ||
-                PREMADE_FACEIT_IDS.includes(player.nickname) // Fallback caso coloques o nickname em vez do ID
+                premadeIds.includes(player.id) ||
+                premadeIds.includes(player.player_id)
             );
 
             // Se pelo menos um membro estiver na partida, envia aviso
@@ -65,12 +73,12 @@ function setupWebhooks(client) {
                 const playerNames = premadeInMatch.map(p => p.nickname).join(', ');
 
                 const embed = new EmbedBuilder()
-                    .setTitle('🎮 Nova Partida Encontrada!')
-                    .setColor('#FF5500') // Laranja característico da Faceit
-                    .setDescription(`A nossa malta encontrou uma partida!\n**Jogadores em jogo:** ${playerNames}`)
+                    .setTitle('🎮・Estamos a Jogar!')
+                    .setColor('#313137')
+                    .setDescription(`Malta de Premade está a jogar!\n### Jogadores em jogo: \n > ${playerNames}`)
                     .addFields(
-                        { name: '🗺️ Mapa', value: mapName, inline: true },
-                        { name: '🔗 Match Room', value: `[Clica aqui para ir para a sala](${matchUrl})`, inline: true }
+                        { name: '\`🗺️\` Mapa', value: mapName, inline: true },
+                        { name: '\`🔗\` Match Room', value: `[Clica aqui para ir para a sala](${matchUrl})`, inline: true }
                     )
                     .setTimestamp();
 
