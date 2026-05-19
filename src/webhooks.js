@@ -123,11 +123,12 @@ function setupWebhooks(client) {
             // ── Partida a começar ──────────────────────────────────────────
             if (event === 'match_status_playing') {
                 const teams = payload.teams;
-                if (!teams || teams.length < 2) return;
+                const teamValues = teams ? Object.values(teams) : [];
+                if (teamValues.length < 2) return;
 
                 const allPlayers = [
-                    ...(teams[0].roster || []),
-                    ...(teams[1].roster || [])
+                    ...(teamValues[0].roster || []),
+                    ...(teamValues[1].roster || [])
                 ];
 
                 const premadeIds = getPremadeIds();
