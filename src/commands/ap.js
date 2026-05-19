@@ -60,7 +60,8 @@ module.exports = {
 
                 const rowFaceit = new ActionRowBuilder()
                     .addComponents(
-                        new ButtonBuilder().setCustomId(`btn_add_faceit_${targetUser.id}_${faceitMsg.id}`).setLabel('Adicionar Nick Faceit').setStyle(ButtonStyle.Primary),
+                        new ButtonBuilder().setCustomId(`btn_get_fcid_${targetUser.id}_${faceitMsg.id}`).setLabel('Como funciona?').setStyle(ButtonStyle.Secondary),
+                        new ButtonBuilder().setCustomId(`btn_add_faceit_${targetUser.id}_${faceitMsg.id}`).setLabel('Sincronizar com a Faceit').setStyle(ButtonStyle.Primary),
                         new ButtonBuilder().setCustomId(`btn_call_admin_${targetUser.id}_${faceitMsg.id}`).setLabel('Pedir Ajuda ao Admin').setStyle(ButtonStyle.Danger).setDisabled(true)
                     );
                 await faceitMsg.edit({ components: [rowFaceit] });
@@ -71,7 +72,8 @@ module.exports = {
                         const currentMsg = await faceitMsg.fetch();
                         if (currentMsg.components[0].components[0].disabled === false) {
                             const timeoutRow = new ActionRowBuilder().addComponents(
-                                new ButtonBuilder().setCustomId(`btn_add_faceit_${targetUser.id}_${faceitMsg.id}`).setLabel('Adicionar Nick Faceit').setStyle(ButtonStyle.Primary).setDisabled(true),
+                                new ButtonBuilder().setCustomId(`btn_get_fcid_${targetUser.id}_${faceitMsg.id}`).setLabel('Como funciona?').setStyle(ButtonStyle.Secondary).setDisabled(true),
+                                new ButtonBuilder().setCustomId(`btn_add_faceit_${targetUser.id}_${faceitMsg.id}`).setLabel('Sincronizar com a Faceit').setStyle(ButtonStyle.Primary).setDisabled(true),
                                 new ButtonBuilder().setCustomId(`btn_call_admin_${targetUser.id}_${faceitMsg.id}`).setLabel('Pedir Ajuda ao Admin').setStyle(ButtonStyle.Danger).setDisabled(false)
                             );
                             await faceitMsg.edit({ components: [timeoutRow] });

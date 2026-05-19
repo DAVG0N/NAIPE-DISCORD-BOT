@@ -4,6 +4,10 @@ const fs = require('fs');
 const path = require('path');
 
 const LEADERBOARD_FILE = path.join(__dirname, '../data/bd.json');
+const POLLING_INTERVAL_MS = 2 * 60 * 1000; // 2 minutos
+
+// Mapa de partidas ativas: matchId -> { intervalId, message, playerNames, matchUrl }
+const activeMatches = new Map();
 
 function getPremadeIds() {
     try {
@@ -16,80 +20,183 @@ function getPremadeIds() {
     }
 }
 
+async function fetchMatchScore(matchId) {
+    const apiKey = process.env.FACEIT_API_KEY;
+    if (!apiKey) return null;
+    try {
+        const res = await fetch(`https://open.faceit.com/data/v4/matches/${matchId}`, {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data;
+    } catch (e) {
+        console.error('[Faceit Webhook] Erro a buscar score:', e);
+        return null;
+    }
+}
+
+function buildPlayingEmbed(playerNames, mapName, matchUrl, score) {
+    const scoreText = score
+        ? `**${score.team1Name}** ${score.team1} — ${score.team2} **${score.team2Name}**`
+        : '🔄 A aguardar score...';
+
+    return new EmbedBuilder()
+        .setTitle('🎮・Estamos a Jogar!')
+        .setColor('#313137')
+        .setDescription(`A Premade está a jogar!\n### Jogadores em campo:\n > ${playerNames}`)
+        .addFields(
+            { name: '`🗺️` Mapa', value: mapName, inline: true },
+            { name: '`📊` Score Atual', value: scoreText, inline: true },
+            { name: '`🔗` Match Room', value: `[Clica aqui](${matchUrl})`, inline: true }
+        )
+        .setFooter({ text: 'Score atualizado a cada 2 minutos' })
+        .setTimestamp();
+}
+
+function buildFinishedEmbed(playerNames, mapName, matchUrl, score, won) {
+    const resultIcon = won === true ? '✅' : won === false ? '❌' : '🏁';
+    const resultText = won === true ? 'Vitória!' : won === false ? 'Derrota' : 'Resultado Final';
+    const scoreText = score
+        ? `**${score.team1Name}** ${score.team1} — ${score.team2} **${score.team2Name}**`
+        : 'Sem dados';
+
+    return new EmbedBuilder()
+        .setTitle(`${resultIcon}・${resultText}`)
+        .setColor(won === true ? '#57F287' : won === false ? '#ED4245' : '#313137')
+        .setDescription(`A Premade terminou a partida!\n### Jogadores:\n > ${playerNames}`)
+        .addFields(
+            { name: '`🗺️` Mapa', value: mapName, inline: true },
+            { name: '`📊` Resultado Final', value: scoreText, inline: true },
+            { name: '`🔗` Match Room', value: `[Clica aqui](${matchUrl})`, inline: true }
+        )
+        .setTimestamp();
+}
+
+function extractScore(matchData) {
+    try {
+        const results = matchData.results;
+        if (!results || !results.score) return null;
+
+        const teamIds = Object.keys(results.score);
+        if (teamIds.length < 2) return null;
+
+        const team1Id = teamIds[0];
+        const team2Id = teamIds[1];
+        const team1Score = results.score[team1Id];
+        const team2Score = results.score[team2Id];
+
+        const team1Name = matchData.teams?.[team1Id]?.name || 'Equipa 1';
+        const team2Name = matchData.teams?.[team2Id]?.name || 'Equipa 2';
+
+        return { team1: team1Score, team2: team2Score, team1Name, team2Name, winnerId: results.winner };
+    } catch (e) {
+        return null;
+    }
+}
+
+function didPremadeWin(matchData, premadeIds) {
+    try {
+        const winnerId = matchData.results?.winner;
+        if (!winnerId) return null;
+
+        const winningTeam = matchData.teams?.[winnerId];
+        if (!winningTeam) return null;
+
+        const winningRoster = winningTeam.roster || [];
+        return winningRoster.some(p => premadeIds.includes(p.id) || premadeIds.includes(p.player_id));
+    } catch (e) {
+        return null;
+    }
+}
+
 function setupWebhooks(client) {
     const app = express();
     app.use(express.json());
 
     app.post('/faceit-webhook', async (req, res) => {
-        // A Faceit exige que os webhooks respondam com status 2xx o mais rápido possível
         res.status(200).send('OK');
 
         try {
             const { event, payload } = req.body;
 
-            // Queremos apenas quando a partida está pronta ou começa
-            if (event !== 'match_status_ready' && event !== 'match_status_playing') {
+            // ── Partida a começar ──────────────────────────────────────────
+            if (event === 'match_status_playing') {
+                const teams = payload.teams;
+                if (!teams || teams.length < 2) return;
+
+                const allPlayers = [
+                    ...(teams[0].roster || []),
+                    ...(teams[1].roster || [])
+                ];
+
+                const premadeIds = getPremadeIds();
+                const premadeInMatch = allPlayers.filter(p =>
+                    premadeIds.includes(p.id) || premadeIds.includes(p.player_id)
+                );
+
+                if (premadeInMatch.length === 0) return;
+
+                const channelId = process.env.CANAL_AVISOS_ID;
+                if (!channelId) { console.error('[Faceit Webhook] ERRO: CANAL_AVISOS_ID não configurado.'); return; }
+
+                const channel = await client.channels.fetch(channelId);
+                if (!channel) { console.error('[Faceit Webhook] ERRO: Canal não encontrado.'); return; }
+
+                const matchId = payload.id;
+                const mapName = payload.entity?.name || 'Desconhecido';
+                const matchUrl = `https://www.faceit.com/en/cs2/room/${matchId}`;
+                const playerNames = premadeInMatch.map(p => p.nickname).join(', ');
+
+                console.log(`[Faceit Webhook] Partida iniciada: ${matchId} | Premade: ${playerNames}`);
+
+                const msg = await channel.send({ embeds: [buildPlayingEmbed(playerNames, mapName, matchUrl, null)] });
+
+                // Inicia polling para atualizar o score
+                const intervalId = setInterval(async () => {
+                    try {
+                        const matchData = await fetchMatchScore(matchId);
+                        if (!matchData) return;
+                        const score = extractScore(matchData);
+                        await msg.edit({ embeds: [buildPlayingEmbed(playerNames, mapName, matchUrl, score)] });
+                        console.log(`[Faceit Webhook] Score atualizado para ${matchId}: ${score ? `${score.team1}-${score.team2}` : 'sem dados'}`);
+                    } catch (e) {
+                        console.error('[Faceit Webhook] Erro no polling:', e);
+                    }
+                }, POLLING_INTERVAL_MS);
+
+                activeMatches.set(matchId, { intervalId, message: msg, playerNames, mapName, matchUrl });
                 return;
             }
 
-            const teams = payload.teams;
-            if (!teams || teams.length < 2) return;
-
-            // Junta os rosters de ambas as equipas
-            const allPlayers = [
-                ...(teams[0].roster || []),
-                ...(teams[1].roster || [])
-            ];
-
-            // Verifica se algum jogador na partida faz parte da nossa premade
-            const premadeIds = getPremadeIds();
-            const premadeInMatch = allPlayers.filter(player =>
-                premadeIds.includes(player.id) ||
-                premadeIds.includes(player.player_id)
-            );
-
-            // Se pelo menos um membro estiver na partida, envia aviso
-            if (premadeInMatch.length > 0) {
-                const channelId = process.env.CANAL_AVISOS_ID;
-                if (!channelId) {
-                    console.error('[Faceit Webhook] ERRO: CANAL_AVISOS_ID não está configurado no ficheiro .env');
-                    return;
-                }
-
-                const channel = await client.channels.fetch(channelId);
-                if (!channel) {
-                    console.error('[Faceit Webhook] ERRO: O canal configurado em CANAL_AVISOS_ID não foi encontrado.');
-                    return;
-                }
-
-                // Extrair detalhes da partida
+            // ── Partida terminada ──────────────────────────────────────────
+            if (event === 'match_status_finished') {
                 const matchId = payload.id;
-                // Os webhooks mais recentes da faceit têm a informação do mapa num sítio ou noutro dependendo da fase.
-                // Na fase match_status_ready pode ainda não haver mapa, mas tenta recolher se existir
-                const mapName = (payload.entity && payload.entity.name) ? payload.entity.name : 'Votação ou Desconhecido';
-                const matchUrl = `https://www.faceit.com/en/cs2/room/${matchId}`;
+                const active = activeMatches.get(matchId);
 
-                // Nomes dos membros da premade que foram encontrados
-                const playerNames = premadeInMatch.map(p => p.nickname).join(', ');
+                if (!active) return; // Não era uma partida da premade
 
-                const embed = new EmbedBuilder()
-                    .setTitle('🎮・Estamos a Jogar!')
-                    .setColor('#313137')
-                    .setDescription(`Malta de Premade está a jogar!\n### Jogadores em jogo: \n > ${playerNames}`)
-                    .addFields(
-                        { name: '\`🗺️\` Mapa', value: mapName, inline: true },
-                        { name: '\`🔗\` Match Room', value: `[Clica aqui para ir para a sala](${matchUrl})`, inline: true }
-                    )
-                    .setTimestamp();
+                clearInterval(active.intervalId);
+                activeMatches.delete(matchId);
 
-                await channel.send({ embeds: [embed] });
+                console.log(`[Faceit Webhook] Partida terminada: ${matchId}`);
+
+                const matchData = await fetchMatchScore(matchId);
+                const score = matchData ? extractScore(matchData) : null;
+                const premadeIds = getPremadeIds();
+                const won = matchData ? didPremadeWin(matchData, premadeIds) : null;
+
+                await active.message.edit({
+                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.matchUrl, score, won)]
+                });
+                return;
             }
+
         } catch (error) {
             console.error('[Faceit Webhook] Ocorreu um erro ao processar o webhook:', error);
         }
     });
 
-    // Em alojamentos Pterodactyl, é preferível usar as portas atribuídas e declaradas nas variáveis de ambiente
     const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;
     app.listen(PORT, () => {
         console.log(`[Webhooks] Servidor Express a escutar Webhooks da Faceit na porta ${PORT}`);
