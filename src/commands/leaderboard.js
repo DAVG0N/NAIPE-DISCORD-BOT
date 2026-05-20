@@ -148,7 +148,7 @@ async function updateLeaderboardMessage(client) {
             const emojiNivel = faceitEmojis[p.level] || `Lvl ${p.level}`;
             embed.addFields({
                 name: `\n`,
-                value: `${medal} ${emojiNivel} **${p.nickname}** - \`${p.elo}\` | Rating: \`N/A\` K/D: \`${p.kd}\` \`${p.history}\`${p.streakSuffix ? ` ${p.streakSuffix}` : ''}`,
+                value: `${medal} ${emojiNivel} **${p.nickname}** - \`${p.elo}\` | Rating: \`N/A\` K/D: \`${p.kd}\` \`${p.history}\` ${p.streakSuffix ? ` \`${p.streakSuffix}\`` : ''}`,
                 inline: false
             });
         });
