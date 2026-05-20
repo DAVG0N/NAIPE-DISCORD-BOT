@@ -119,12 +119,16 @@ function setupWebhooks(client) {
 
         try {
             const { event, payload } = req.body;
+            console.log(`[Faceit Webhook Debug] Webhook recebido — event: "${event}"`);
 
             // ── Partida a começar ──────────────────────────────────────────
             if (event === 'match_status_playing') {
                 const teams = payload.teams;
                 const teamValues = teams ? Object.values(teams) : [];
-                if (teamValues.length < 2) return;
+                if (teamValues.length < 2) {
+                    console.log(`[Faceit Webhook Debug] Ignorado: Menos de 2 equipas (teamValues.length=${teamValues.length})`);
+                    return;
+                }
 
                 const allPlayers = [
                     ...(teamValues[0].roster || []),
@@ -136,13 +140,22 @@ function setupWebhooks(client) {
                     premadeIds.includes(p.id) || premadeIds.includes(p.player_id)
                 );
 
-                if (premadeInMatch.length === 0) return;
+                if (premadeInMatch.length === 0) {
+                    console.log(`[Faceit Webhook Debug] Ignorado: Ninguém da premade na partida (premadeIds: [${premadeIds.join(', ')}])`);
+                    return;
+                }
 
                 const channelId = process.env.CANAL_AVISOS_ID;
-                if (!channelId) { console.error('[Faceit Webhook] ERRO: CANAL_AVISOS_ID não configurado.'); return; }
+                if (!channelId) {
+                    console.error('[Faceit Webhook Debug] Ignorado: CANAL_AVISOS_ID não configurado.');
+                    return;
+                }
 
                 const channel = await client.channels.fetch(channelId);
-                if (!channel) { console.error('[Faceit Webhook] ERRO: Canal não encontrado.'); return; }
+                if (!channel) {
+                    console.error(`[Faceit Webhook Debug] Ignorado: Canal não encontrado (id: ${channelId}).`);
+                    return;
+                }
 
                 const matchId = payload.id;
                 const mapName = payload.entity?.name || 'Desconhecido';
@@ -175,7 +188,10 @@ function setupWebhooks(client) {
                 const matchId = payload.id;
                 const active = activeMatches.get(matchId);
 
-                if (!active) return; // Não era uma partida da premade
+                if (!active) {
+                    console.log(`[Faceit Webhook Debug] Ignorado: Partida "${matchId}" não estava a ser monitorizada (não era da premade ou bot reiniciou).`);
+                    return;
+                }
 
                 clearInterval(active.intervalId);
                 activeMatches.delete(matchId);
@@ -192,6 +208,8 @@ function setupWebhooks(client) {
                 });
                 return;
             }
+
+            console.log(`[Faceit Webhook Debug] Ignorado: Evento "${event}" não é tratado por este bot.`);
 
         } catch (error) {
             console.error('[Faceit Webhook] Ocorreu um erro ao processar o webhook:', error);
