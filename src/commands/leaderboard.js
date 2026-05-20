@@ -93,24 +93,38 @@ async function updateLeaderboardMessage(client) {
                 const kd = stats.lifetime?.['Average K/D Ratio'] || 'N/A';
 
                 // Histórico
-                const historyRes = await fetch(`https://open.faceit.com/data/v4/players/${player.player_id}/history?game=cs2&offset=0&limit=5`, { headers: { 'Authorization': `Bearer ${apiKey}` } });
+                const historyRes = await fetch(`https://open.faceit.com/data/v4/players/${player.player_id}/history?game=cs2&offset=0&limit=10`, { headers: { 'Authorization': `Bearer ${apiKey}` } });
                 const history = await historyRes.json();
                 
                 let historyEmojis = '';
-                if (history && history.items) {
-                    for (const match of history.items) {
+                let streakSuffix = '';
+                if (history && history.items && history.items.length > 0) {
+                    const results = history.items.map(match => {
                         const faction1Ids = match.teams.faction1.players.map(p => p.player_id);
                         const playerFaction = faction1Ids.includes(player.player_id) ? 'faction1' : 'faction2';
-                        if (match.results && match.results.winner === playerFaction) {
-                            historyEmojis += '🟢';
-                        } else {
-                            historyEmojis += '🔴';
-                        }
+                        return (match.results && match.results.winner === playerFaction) ? 'W' : 'L';
+                    });
+
+                    // Calcular streak atual (a partir do jogo mais recente)
+                    const firstResult = results[0];
+                    let streakCount = 0;
+                    for (const r of results) {
+                        if (r === firstResult) streakCount++;
+                        else break;
+                    }
+
+                    if (streakCount >= 5) {
+                        streakSuffix = firstResult === 'W' ? `🔥${streakCount}` : `⚰️${streakCount}`;
+                    }
+
+                    // Mostrar apenas os últimos 5 círculos
+                    for (const r of results.slice(0, 5)) {
+                        historyEmojis += r === 'W' ? '🟢' : '🔴';
                     }
                 }
                 if (!historyEmojis) historyEmojis = 'Sem dados';
 
-                playersData.push({ nickname: player.nickname, elo: elo, level: level, kd: kd, history: historyEmojis });
+                playersData.push({ nickname: player.nickname, elo: elo, level: level, kd: kd, history: historyEmojis, streakSuffix });
             } catch (err) {
                 console.error(`Erro ao buscar dados para ${player.nickname}:`, err);
                 playersData.push({ nickname: player.nickname, elo: 'Erro', level: '?', kd: 'Erro', history: 'Erro' });
@@ -134,7 +148,7 @@ async function updateLeaderboardMessage(client) {
             const emojiNivel = faceitEmojis[p.level] || `Lvl ${p.level}`;
             embed.addFields({
                 name: `\n`,
-                value: `${medal} ${emojiNivel} **${p.nickname}** - \`${p.elo}\` | Rating: \`N/A\` K/D: \`${p.kd}\` \`${p.history}\``,
+                value: `${medal} ${emojiNivel} **${p.nickname}** - \`${p.elo}\` | Rating: \`N/A\` K/D: \`${p.kd}\` \`${p.history}\` \`${p.streakSuffix || ''}\``,
                 inline: false
             });
         });
