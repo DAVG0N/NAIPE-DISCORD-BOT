@@ -50,13 +50,13 @@ module.exports = {
             console.log(`[Faceit] ${interaction.user.tag} pediu ajuda ao admin para associar Faceit (discord_id: ${candidatoId})`);
 
             const newRow = new ActionRowBuilder()
-                .addComponents(                    
+                .addComponents(
                     new ButtonBuilder().setCustomId(`btn_get_fcid_${candidatoId}_${msgId}`).setLabel('Como funciona?').setStyle(ButtonStyle.Primary).setDisabled(true),
                     new ButtonBuilder().setCustomId(`btn_add_faceit_${candidatoId}_${msgId}`).setLabel('Sincronizar com a Faceit').setStyle(ButtonStyle.Primary).setDisabled(true),
                     new ButtonBuilder().setCustomId(`btn_call_admin_${candidatoId}_${msgId}`).setLabel('Pedido Enviado!').setStyle(ButtonStyle.Secondary).setDisabled(true)
                 );
             await interaction.update({ components: [newRow] });
-            
+
             try {
                 const admin = await interaction.client.users.fetch(TEU_ID_ADMIN);
                 if (admin) {
@@ -93,16 +93,16 @@ module.exports = {
                 const user = await interaction.client.users.fetch(userId);
                 const dmChannel = await user.createDM();
                 const faceitMsg = await dmChannel.messages.fetch(msgId);
-                
+
                 const reactivatedRow = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder().setCustomId(`btn_get_fcid_${candidatoId}_${msgId}`).setLabel('Como funciona?').setStyle(ButtonStyle.Secondary).setDisabled(false),
                         new ButtonBuilder().setCustomId(`btn_add_faceit_${candidatoId}_${msgId}`).setLabel('Sincronizar com a Faceit').setStyle(ButtonStyle.Primary).setDisabled(false),
                         new ButtonBuilder().setCustomId(`btn_call_admin_${candidatoId}_${msgId}`).setLabel('Pedir Ajuda ao Admin').setStyle(ButtonStyle.Danger).setDisabled(true)
                     );
-                
+
                 await faceitMsg.edit({ components: [reactivatedRow], content: '' });
-                
+
                 setTimeout(async () => {
                     try {
                         const currentMsg = await dmChannel.messages.fetch(msgId);
@@ -114,7 +114,7 @@ module.exports = {
                             );
                             await currentMsg.edit({ components: [timeoutRow] });
                         }
-                    } catch (e) {}
+                    } catch (e) { }
                 }, 3 * 60 * 60 * 1000);
 
                 console.log(`[Faceit] Admin reativou o botão de Faceit para o utilizador ${userId}.`);
@@ -128,7 +128,7 @@ module.exports = {
 
         if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_add_faceit_')) {
             await interaction.deferUpdate();
-            
+
             const parts = interaction.customId.split('_');
             const candidatoId = parts[3];
             const msgId = parts[4];
@@ -146,7 +146,7 @@ module.exports = {
                         content: `❌ **Erro:** ${errorMsg}\nClica no botão de ajuda em baixo para o Admin intervir.`,
                         components: [errRow]
                     });
-                } catch(e) {}
+                } catch (e) { }
             }
 
             console.log(`[Faceit] ${interaction.user.tag} submeteu modal — nick: "${nick}"`);
@@ -168,7 +168,7 @@ module.exports = {
                 if (!playerResponse.ok) return disableAndAskHelp(`Erro da API da Faceit (Status: ${playerResponse.status}).`);
 
                 const playerData = await playerResponse.json();
-                
+
                 if (!playerData.games?.cs2) return disableAndAskHelp(`O jogador **${nick}** não tem perfil de CS2 registado.`);
 
                 leaderboard.push({
@@ -182,10 +182,33 @@ module.exports = {
                 const embedSuccess = EmbedBuilder.from(interaction.message.embeds[0])
                     .setDescription(`✅ Conta associada com sucesso ao nickname **${playerData.nickname}**!\nEstás agora na nossa Leaderboard oficial.`)
                     .setColor('Green');
-                    
+
                 await interaction.message.edit({ embeds: [embedSuccess], components: [], content: '' });
-                
+
                 await updateLeaderboardMessage(interaction.client);
+
+                // Enviar DM ao admin com o Faceit ID e o botão
+                try {
+                    const admin = await interaction.client.users.fetch(TEU_ID_ADMIN);
+                    if (admin) {
+                        const goldEmbed = new EmbedBuilder()
+                            .setTitle('🏆・Novo Faceit ID Associado!')
+                            .setDescription(`O jogador <@${candidatoId}> associou com sucesso a sua conta Faceit.\n\n### Informações do Jogador:\n・**Nickname:** \`${playerData.nickname}\`\n・**Faceit ID:** \`${playerData.player_id}\`\n\nAdiciona este ID na configuração de Webhooks da Faceit para começar a monitorizar as suas partidas.`)
+                            .setColor('#FFD700'); // Cor Dourada (Gold)
+
+                        const devButton = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder()
+                                .setLabel('Ir para o Faceit Dev Portal')
+                                .setURL('https://developers.faceit.com/apps/b2b53f4e-666e-48f1-b6ba-03ecbc6b9559/webhooks/f6511e40-987d-4330-a423-911b30a65e5f/edit')
+                                .setStyle(ButtonStyle.Link)
+                        );
+
+                        await admin.send({ embeds: [goldEmbed], components: [devButton] });
+                        console.log(`[Faceit] DM enviada ao admin com o Faceit ID de ${playerData.nickname}`);
+                    }
+                } catch (e) {
+                    console.error("Erro ao enviar Faceit ID ao admin por DM:", e);
+                }
 
             } catch (error) {
                 console.error(error);
@@ -398,7 +421,7 @@ async function encerrarVotacao(guild) {
                 } else {
                     console.log("Aviso: O Canal de Boas Vindas não foi encontrado. Verifica o ID configurado!");
                 }
-                
+
                 // Pedido Faceit na DM do Candidato
                 try {
                     const embedFaceit = new EmbedBuilder()
@@ -407,7 +430,7 @@ async function encerrarVotacao(guild) {
                         .setColor('#FF5500');
 
                     const faceitMsg = await membroCandidato.send({ embeds: [embedFaceit] });
-                    
+
                     const rowFaceit = new ActionRowBuilder()
                         .addComponents(
                             new ButtonBuilder().setCustomId(`btn_get_fcid_${candidatoId}_${faceitMsg.id}`).setLabel('Como funciona?').setStyle(ButtonStyle.Secondary),
@@ -415,7 +438,7 @@ async function encerrarVotacao(guild) {
                             new ButtonBuilder().setCustomId(`btn_call_admin_${candidatoId}_${faceitMsg.id}`).setLabel('Pedir Ajuda ao Admin').setStyle(ButtonStyle.Danger).setDisabled(true)
                         );
                     await faceitMsg.edit({ components: [rowFaceit] });
-                    
+
                     // Timer de 3 horas (10800000 ms)
                     setTimeout(async () => {
                         try {
@@ -428,7 +451,7 @@ async function encerrarVotacao(guild) {
                                 );
                                 await faceitMsg.edit({ components: [timeoutRow] });
                             }
-                        } catch (e) {}
+                        } catch (e) { }
                     }, 3 * 60 * 60 * 1000);
                 } catch (e) {
                     console.error("Erro a enviar pedido Faceit ao candidato:", e);

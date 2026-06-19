@@ -98,6 +98,7 @@ async function updateLeaderboardMessage(client) {
                 
                 let historyEmojis = '';
                 let streakSuffix = '';
+                let faceitRating = 'N/A';
                 if (history && history.items && history.items.length > 0) {
                     const results = history.items.map(match => {
                         const faction1Ids = match.teams.faction1.players.map(p => p.player_id);
@@ -121,13 +122,41 @@ async function updateLeaderboardMessage(client) {
                     for (const r of results.slice(0, 5)) {
                         historyEmojis += r === 'W' ? '🟢' : '🔴';
                     }
+
+                    // Obter as estatísticas da partida mais recente para extrair o Rating
+                    const latestMatchId = history.items[0].match_id;
+                    try {
+                        const matchStatsResponse = await fetch(`https://open.faceit.com/data/v4/matches/${latestMatchId}/stats`, {
+                            headers: { 'Authorization': `Bearer ${apiKey}` }
+                        });
+                        if (matchStatsResponse.ok) {
+                            const matchStatsData = await matchStatsResponse.json();
+                            if (matchStatsData.rounds && matchStatsData.rounds[0] && matchStatsData.rounds[0].teams) {
+                                let foundRating = null;
+                                for (const team of matchStatsData.rounds[0].teams) {
+                                    if (team.players) {
+                                        const p = team.players.find(pl => pl.player_id === player.player_id);
+                                        if (p && p.player_stats) {
+                                            foundRating = p.player_stats['FACEIT Rating'] || p.player_stats['Match Rating'] || p.player_stats['rating'];
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (foundRating) {
+                                    faceitRating = foundRating;
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        console.error(`Erro ao obter rating da partida para ${player.nickname}:`, err);
+                    }
                 }
                 if (!historyEmojis) historyEmojis = 'Sem dados';
 
-                playersData.push({ nickname: player.nickname, elo: elo, level: level, kd: kd, history: historyEmojis, streakSuffix });
+                playersData.push({ nickname: player.nickname, elo: elo, level: level, kd: kd, rating: faceitRating, history: historyEmojis, streakSuffix });
             } catch (err) {
                 console.error(`Erro ao buscar dados para ${player.nickname}:`, err);
-                playersData.push({ nickname: player.nickname, elo: 'Erro', level: '?', kd: 'Erro', history: 'Erro' });
+                playersData.push({ nickname: player.nickname, elo: 'Erro', level: '?', kd: 'Erro', rating: 'Erro', history: 'Erro' });
             }
         }
 
@@ -148,7 +177,7 @@ async function updateLeaderboardMessage(client) {
             const emojiNivel = faceitEmojis[p.level] || `Lvl ${p.level}`;
             embed.addFields({
                 name: `\n`,
-                value: `${medal} ${emojiNivel} **${p.nickname}** - \`${p.elo}\` | Rating: \`N/A\` K/D: \`${p.kd}\` \`${p.history}\` ${p.streakSuffix ? ` \`${p.streakSuffix}\`` : ''}`,
+                value: `${medal} ${emojiNivel} **${p.nickname}** - \`${p.elo}\` | Rating: \`${p.rating}\` K/D: \`${p.kd}\` \`${p.history}\` ${p.streakSuffix ? ` \`${p.streakSuffix}\`` : ''}`,
                 inline: false
             });
         });
