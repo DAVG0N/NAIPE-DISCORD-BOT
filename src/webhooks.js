@@ -54,20 +54,54 @@ function buildPlayingEmbed(playerNames, mapName, matchUrl, score) {
         .setTimestamp();
 }
 
-function buildFinishedEmbed(playerNames, mapName, matchUrl, score, won) {
+function buildFinishedEmbed(playerNames, mapName, matchUrl, score, won, demoUrl) {
     const resultIcon = won === true ? '✅' : won === false ? '❌' : '🏁';
     const resultText = won === true ? 'Vitória!' : won === false ? 'Derrota' : 'Resultado Final';
     const scoreText = score
         ? `**${score.team1Name}** ${score.team1} — ${score.team2} **${score.team2Name}**`
         : 'Sem dados';
 
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
         .setTitle(`${resultIcon}・${resultText}`)
         .setColor(won === true ? '#57F287' : won === false ? '#ED4245' : '#313137')
         .setDescription(`A Premade terminou a partida!\n### Jogadores:\n > ${playerNames}`)
         .addFields(
             { name: '`🗺️` Mapa', value: mapName, inline: true },
             { name: '`📊` Resultado Final', value: scoreText, inline: true },
+            { name: '`🔗` Match Room', value: `[Clica aqui](${matchUrl})`, inline: true }
+        );
+
+    if (demoUrl) {
+        embed.addFields({ name: '`🎥` GOTV Demo', value: `[Descarregar Demo](${demoUrl})`, inline: true });
+    } else {
+        embed.addFields({ name: '`🎥` GOTV Demo', value: '🔄 A processar demo...', inline: true });
+    }
+
+    embed.setTimestamp();
+    return embed;
+}
+
+function buildWarmupEmbed(playerNames, mapName, matchUrl) {
+    return new EmbedBuilder()
+        .setTitle('🔥・Partida Encontrada!')
+        .setColor('#FF5500')
+        .setDescription(`A Premade está em aquecimento!\n### Jogadores em campo:\n > ${playerNames}`)
+        .addFields(
+            { name: '`🗺️` Mapa', value: mapName, inline: true },
+            { name: '`🚦` Estado', value: '🔄 No aquecimento / Vetoes prontos', inline: true },
+            { name: '`🔗` Match Room', value: `[Clica aqui](${matchUrl})`, inline: true }
+        )
+        .setTimestamp();
+}
+
+function buildCancelledEmbed(playerNames, mapName, matchUrl, reason) {
+    return new EmbedBuilder()
+        .setTitle('❌・Partida Cancelada')
+        .setColor('#ED4245')
+        .setDescription(`A partida da Premade foi cancelada.\n### Jogadores:\n > ${playerNames}`)
+        .addFields(
+            { name: '`🗺️` Mapa', value: mapName, inline: true },
+            { name: '`ℹ️` Motivo', value: reason || 'Jogadores não se ligaram a tempo ou partida abortada.', inline: true },
             { name: '`🔗` Match Room', value: `[Clica aqui](${matchUrl})`, inline: true }
         )
         .setTimestamp();
@@ -121,8 +155,8 @@ function setupWebhooks(client) {
             const { event, payload } = req.body;
             console.log(`[Faceit Webhook Debug] Webhook recebido — event: "${event}"`);
 
-            // ── Partida a começar ──────────────────────────────────────────
-            if (event === 'match_status_playing') {
+            // ── Partida em Aquecimento / Vetoes Prontos ────────────────────
+            if (event === 'match_status_ready') {
                 const teams = payload.teams;
                 const teamValues = teams ? Object.values(teams) : [];
                 if (teamValues.length < 2) {
@@ -158,11 +192,104 @@ function setupWebhooks(client) {
                 }
 
                 const matchId = payload.id;
+                if (activeMatches.has(matchId)) {
+                    console.log(`[Faceit Webhook Debug] Partida ${matchId} já está a ser monitorizada.`);
+                    return;
+                }
+
                 const mapName = payload.entity?.name || 'Desconhecido';
                 const matchUrl = `https://www.faceit.com/en/cs2/room/${matchId}`;
                 const playerNames = premadeInMatch.map(p => p.nickname).join(', ');
 
-                console.log(`[Faceit Webhook] Partida iniciada: ${matchId} | Premade: ${playerNames}`);
+                console.log(`[Faceit Webhook] Partida em aquecimento (Ready): ${matchId} | Premade: ${playerNames}`);
+
+                const msg = await channel.send({ embeds: [buildWarmupEmbed(playerNames, mapName, matchUrl)] });
+
+                activeMatches.set(matchId, {
+                    message: msg,
+                    playerNames,
+                    mapName,
+                    matchUrl,
+                    state: 'ready',
+                    intervalId: null
+                });
+                return;
+            }
+
+            // ── Partida a começar / Live ───────────────────────────────────
+            if (event === 'match_status_playing') {
+                const matchId = payload.id;
+                let active = activeMatches.get(matchId);
+
+                // Se já estiver na memória (veio do ready), atualizamos a mensagem existente
+                if (active) {
+                    console.log(`[Faceit Webhook] Partida live (Playing): ${matchId} | A atualizar mensagem existente.`);
+                    
+                    if (active.intervalId) {
+                        clearInterval(active.intervalId);
+                    }
+
+                    await active.message.edit({ embeds: [buildPlayingEmbed(active.playerNames, active.mapName, active.matchUrl, null)] });
+
+                    // Inicia polling para atualizar o score
+                    const intervalId = setInterval(async () => {
+                        try {
+                            const matchData = await fetchMatchScore(matchId);
+                            if (!matchData) return;
+                            const score = extractScore(matchData);
+                            await active.message.edit({ embeds: [buildPlayingEmbed(active.playerNames, active.mapName, active.matchUrl, score)] });
+                            console.log(`[Faceit Webhook] Score atualizado para ${matchId}: ${score ? `${score.team1}-${score.team2}` : 'sem dados'}`);
+                        } catch (e) {
+                            console.error('[Faceit Webhook] Erro no polling:', e);
+                        }
+                    }, POLLING_INTERVAL_MS);
+
+                    active.intervalId = intervalId;
+                    active.state = 'playing';
+                    activeMatches.set(matchId, active);
+                    return;
+                }
+
+                // Fallback: Se não estiver na memória (por ex. bot reiniciou ou perdeu ready), criamos do zero
+                const teams = payload.teams;
+                const teamValues = teams ? Object.values(teams) : [];
+                if (teamValues.length < 2) {
+                    console.log(`[Faceit Webhook Debug] Ignorado: Menos de 2 equipas (teamValues.length=${teamValues.length})`);
+                    return;
+                }
+
+                const allPlayers = [
+                    ...(teamValues[0].roster || []),
+                    ...(teamValues[1].roster || [])
+                ];
+
+                const premadeIds = getPremadeIds();
+                const premadeInMatch = allPlayers.filter(p =>
+                    premadeIds.includes(p.id) || premadeIds.includes(p.player_id)
+                );
+
+                if (premadeInMatch.length === 0) {
+                    console.log(`[Faceit Webhook Debug] Ignorado: Ninguém da premade na partida (premadeIds: [${premadeIds.join(', ')}])`);
+                    return;
+                }
+
+                const channelId = process.env.CANAL_AVISOS_ID;
+                if (!channelId) {
+                    console.error('[Faceit Webhook Debug] Ignorado: CANAL_AVISOS_ID não configurado.');
+                    return;
+                }
+
+                const channel = await client.channels.fetch(channelId);
+                if (!channel) {
+                    console.error(`[Faceit Webhook Debug] Ignorado: Canal não encontrado (id: ${channelId}).`);
+                    return;
+                }
+
+                const mapName = payload.entity?.name || 'Desconhecido';
+                const matchUrl = `https://www.faceit.com/en/cs2/room/${matchId}`;
+                const playerNames = premadeInMatch.map(p => p.nickname).join(', ');
+
+                console.log(`[Faceit Webhook] Partida live (Playing - fallback): ${matchId} | Premade: ${playerNames}`);
 
                 const msg = await channel.send({ embeds: [buildPlayingEmbed(playerNames, mapName, matchUrl, null)] });
 
@@ -179,7 +306,14 @@ function setupWebhooks(client) {
                     }
                 }, POLLING_INTERVAL_MS);
 
-                activeMatches.set(matchId, { intervalId, message: msg, playerNames, mapName, matchUrl });
+                activeMatches.set(matchId, {
+                    intervalId,
+                    message: msg,
+                    playerNames,
+                    mapName,
+                    matchUrl,
+                    state: 'playing'
+                });
                 return;
             }
 
@@ -193,8 +327,9 @@ function setupWebhooks(client) {
                     return;
                 }
 
-                clearInterval(active.intervalId);
-                activeMatches.delete(matchId);
+                if (active.intervalId) {
+                    clearInterval(active.intervalId);
+                }
 
                 console.log(`[Faceit Webhook] Partida terminada: ${matchId}`);
 
@@ -202,10 +337,83 @@ function setupWebhooks(client) {
                 const score = matchData ? extractScore(matchData) : null;
                 const premadeIds = getPremadeIds();
                 const won = matchData ? didPremadeWin(matchData, premadeIds) : null;
+                const demoUrl = matchData?.demo_url?.[0] || (matchData?.demo_url && typeof matchData.demo_url === 'string' ? matchData.demo_url : null);
 
                 await active.message.edit({
-                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.matchUrl, score, won)]
+                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.matchUrl, score, won, demoUrl)]
                 });
+
+                if (demoUrl) {
+                    // Se já temos a demo, completamos o fluxo e removemos
+                    activeMatches.delete(matchId);
+                } else {
+                    // Se a demo ainda não estiver pronta, guardamos o estado final para o evento match_demo_ready
+                    active.state = 'finished';
+                    active.won = won;
+                    active.score = score;
+                    active.intervalId = null;
+                    activeMatches.set(matchId, active);
+
+                    // Segurança: Timeout de limpeza após 2 horas se o webhook da demo falhar
+                    setTimeout(() => {
+                        if (activeMatches.has(matchId) && activeMatches.get(matchId).state === 'finished') {
+                            activeMatches.delete(matchId);
+                            console.log(`[Faceit Webhook Debug] Limpeza automática da partida ${matchId} (timeout sem demo).`);
+                        }
+                    }, 2 * 60 * 60 * 1000);
+                }
+                return;
+            }
+
+            // ── Demo da partida pronta ─────────────────────────────────────
+            if (event === 'match_demo_ready') {
+                const matchId = payload.match_id || payload.id;
+                const active = activeMatches.get(matchId);
+
+                if (!active) {
+                    console.log(`[Faceit Webhook Debug] Ignorado: Demo pronta para partida "${matchId}", mas a partida não estava em monitorização final.`);
+                    return;
+                }
+
+                console.log(`[Faceit Webhook] Demo pronta para partida: ${matchId}`);
+
+                const matchData = await fetchMatchScore(matchId);
+                const demoUrl = matchData?.demo_url?.[0] || (matchData?.demo_url && typeof matchData.demo_url === 'string' ? matchData.demo_url : null) || payload.demo_url;
+
+                if (demoUrl) {
+                    await active.message.edit({
+                        embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.matchUrl, active.score, active.won, demoUrl)]
+                    });
+                    console.log(`[Faceit Webhook] Embed editado com o link final da demo: ${demoUrl}`);
+                } else {
+                    console.log(`[Faceit Webhook Debug] Não foi possível obter o URL da demo para a partida ${matchId}.`);
+                }
+
+                activeMatches.delete(matchId);
+                return;
+            }
+
+            // ── Partida cancelada ou abortada ──────────────────────────────
+            if (event === 'match_status_cancelled' || event === 'match_status_aborted') {
+                const matchId = payload.id;
+                const active = activeMatches.get(matchId);
+
+                if (!active) {
+                    console.log(`[Faceit Webhook Debug] Ignorado: Partida "${matchId}" foi cancelada/abortada mas não estava a ser monitorizada.`);
+                    return;
+                }
+
+                if (active.intervalId) {
+                    clearInterval(active.intervalId);
+                }
+
+                console.log(`[Faceit Webhook] Partida cancelada/abortada: ${matchId}`);
+
+                await active.message.edit({
+                    embeds: [buildCancelledEmbed(active.playerNames, active.mapName, active.matchUrl, 'Partida Cancelada ou Abortada na Faceit.')]
+                });
+
+                activeMatches.delete(matchId);
                 return;
             }
 
