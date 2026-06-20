@@ -1,5 +1,5 @@
 const express = require('express');
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -11,6 +11,35 @@ const activeMatches = new Map();
 
 // Mapa de alertas de partidas: matchId -> { halftimeSent, matchpointSent, overtimeSent }
 const activeMatchesAlerts = new Map();
+
+function buildMatchButtons(matchUrl, demoUrl = null) {
+    const row = new ActionRowBuilder();
+    
+    // Botão 1: Match Room (Sempre ativo)
+    const matchRoomBtn = new ButtonBuilder()
+        .setLabel('Match Room')
+        .setStyle(ButtonStyle.Link)
+        .setURL(matchUrl);
+        
+    // Botão 2: GOTV Demo
+    let demoBtn;
+    if (demoUrl) {
+        demoBtn = new ButtonBuilder()
+            .setLabel('GOTV Demo')
+            .setStyle(ButtonStyle.Link)
+            .setURL(demoUrl)
+            .setDisabled(false);
+    } else {
+        demoBtn = new ButtonBuilder()
+            .setCustomId('disabled_demo')
+            .setLabel('GOTV Demo')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(true);
+    }
+    
+    row.addComponents(matchRoomBtn, demoBtn);
+    return row;
+}
 
 function getPremadeIds() {
     try {
@@ -282,7 +311,7 @@ async function fetchMatchScore(matchId) {
     }
 }
 
-function buildPlayingEmbed(playerNames, mapName, matchUrl, score) {
+function buildPlayingEmbed(playerNames, mapName, score) {
     const scoreText = score
         ? `**${score.team1Name}** ${score.team1} — ${score.team2} **${score.team2Name}**`
         : '🔄 A aguardar score...';
@@ -293,62 +322,50 @@ function buildPlayingEmbed(playerNames, mapName, matchUrl, score) {
         .setDescription(`A Premade está a jogar!\n### Jogadores em campo:\n > ${playerNames}`)
         .addFields(
             { name: '`🗺️` Mapa', value: mapName, inline: true },
-            { name: '`📊` Score Atual', value: scoreText, inline: true },
-            { name: '`🔗` Match Room', value: `[Clica aqui](${matchUrl})`, inline: true }
+            { name: '`📊` Score Atual', value: scoreText, inline: true }
         )
         .setFooter({ text: 'Score atualizado a cada 2 minutos' })
         .setTimestamp();
 }
 
-function buildFinishedEmbed(playerNames, mapName, matchUrl, score, won, demoUrl) {
+function buildFinishedEmbed(playerNames, mapName, score, won) {
     const resultIcon = won === true ? '✅' : won === false ? '❌' : '🏁';
     const resultText = won === true ? 'Vitória!' : won === false ? 'Derrota' : 'Resultado Final';
     const scoreText = score
         ? `**${score.team1Name}** ${score.team1} — ${score.team2} **${score.team2Name}**`
         : 'Sem dados';
 
-    const embed = new EmbedBuilder()
+    return new EmbedBuilder()
         .setTitle(`${resultIcon}・${resultText}`)
         .setColor(won === true ? '#57F287' : won === false ? '#ED4245' : '#313137')
         .setDescription(`A Premade terminou a partida!\n### Jogadores:\n > ${playerNames}`)
         .addFields(
             { name: '`🗺️` Mapa', value: mapName, inline: true },
-            { name: '`📊` Resultado Final', value: scoreText, inline: true },
-            { name: '`🔗` Match Room', value: `[Clica aqui](${matchUrl})`, inline: true }
-        );
-
-    if (demoUrl) {
-        embed.addFields({ name: '`🎥` GOTV Demo', value: `[Descarregar Demo](${demoUrl})`, inline: true });
-    } else {
-        embed.addFields({ name: '`🎥` GOTV Demo', value: '🔄 A processar demo...', inline: true });
-    }
-
-    embed.setTimestamp();
-    return embed;
+            { name: '`📊` Resultado Final', value: scoreText, inline: true }
+        )
+        .setTimestamp();
 }
 
-function buildWarmupEmbed(playerNames, mapName, matchUrl) {
+function buildWarmupEmbed(playerNames, mapName) {
     return new EmbedBuilder()
         .setTitle('🔥・Partida Encontrada!')
         .setColor('#FF5500')
         .setDescription(`A Premade está em aquecimento!\n### Jogadores em campo:\n > ${playerNames}`)
         .addFields(
             { name: '`🗺️` Mapa', value: mapName, inline: true },
-            { name: '`🚦` Estado', value: '🔄 No aquecimento / Vetoes prontos', inline: true },
-            { name: '`🔗` Match Room', value: `[Clica aqui](${matchUrl})`, inline: true }
+            { name: '`🚦` Estado', value: '🔄 No aquecimento / Vetoes prontos', inline: true }
         )
         .setTimestamp();
 }
 
-function buildCancelledEmbed(playerNames, mapName, matchUrl, reason) {
+function buildCancelledEmbed(playerNames, mapName, reason) {
     return new EmbedBuilder()
         .setTitle('❌・Partida Cancelada')
         .setColor('#ED4245')
         .setDescription(`A partida da Premade foi cancelada.\n### Jogadores:\n > ${playerNames}`)
         .addFields(
             { name: '`🗺️` Mapa', value: mapName, inline: true },
-            { name: '`ℹ️` Motivo', value: reason || 'Jogadores não se ligaram a tempo ou partida abortada.', inline: true },
-            { name: '`🔗` Match Room', value: `[Clica aqui](${matchUrl})`, inline: true }
+            { name: '`ℹ️` Motivo', value: reason || 'Jogadores não se ligaram a tempo ou partida abortada.', inline: true }
         )
         .setTimestamp();
 }
@@ -449,7 +466,10 @@ function setupWebhooks(client) {
 
                 console.log(`[Faceit Webhook] Partida em aquecimento (Ready): ${matchId} | Premade: ${playerNames}`);
 
-                const msg = await channel.send({ embeds: [buildWarmupEmbed(playerNames, mapName, matchUrl)] });
+                const msg = await channel.send({ 
+                    embeds: [buildWarmupEmbed(playerNames, mapName)],
+                    components: [buildMatchButtons(matchUrl, null)]
+                });
 
                 const premadeFaction = getPremadeFaction(payload, premadeIds);
 
@@ -489,7 +509,10 @@ function setupWebhooks(client) {
                         active.premadeFaction = getPremadeFaction(payload, premadeIds);
                     }
 
-                    await active.message.edit({ embeds: [buildPlayingEmbed(active.playerNames, active.mapName, active.matchUrl, null)] });
+                    await active.message.edit({ 
+                        embeds: [buildPlayingEmbed(active.playerNames, active.mapName, null)],
+                        components: [buildMatchButtons(active.matchUrl, null)]
+                    });
 
                     // Inicia polling para atualizar o score
                     const intervalId = setInterval(async () => {
@@ -503,7 +526,10 @@ function setupWebhooks(client) {
                             }
 
                             const score = extractScore(matchData);
-                            await active.message.edit({ embeds: [buildPlayingEmbed(active.playerNames, active.mapName, active.matchUrl, score)] });
+                            await active.message.edit({ 
+                                embeds: [buildPlayingEmbed(active.playerNames, active.mapName, score)],
+                                components: [buildMatchButtons(active.matchUrl, null)]
+                            });
                             console.log(`[Faceit Webhook] Score atualizado para ${matchId}: ${score ? `${score.team1}-${score.team2}` : 'sem dados'}`);
 
                             if (score) {
@@ -569,7 +595,10 @@ function setupWebhooks(client) {
 
                 console.log(`[Faceit Webhook] Partida live (Playing - fallback): ${matchId} | Premade: ${playerNames}`);
 
-                const msg = await channel.send({ embeds: [buildPlayingEmbed(playerNames, mapName, matchUrl, null)] });
+                const msg = await channel.send({ 
+                    embeds: [buildPlayingEmbed(playerNames, mapName, null)],
+                    components: [buildMatchButtons(matchUrl, null)]
+                });
 
                 const premadeFaction = getPremadeFaction(payload, premadeIds);
                 const activeState = {
@@ -593,7 +622,10 @@ function setupWebhooks(client) {
                         }
 
                         const score = extractScore(matchData);
-                        await msg.edit({ embeds: [buildPlayingEmbed(playerNames, mapName, matchUrl, score)] });
+                        await msg.edit({ 
+                            embeds: [buildPlayingEmbed(playerNames, mapName, score)],
+                            components: [buildMatchButtons(matchUrl, null)]
+                        });
                         console.log(`[Faceit Webhook] Score atualizado para ${matchId}: ${score ? `${score.team1}-${score.team2}` : 'sem dados'}`);
 
                         if (score) {
@@ -638,7 +670,8 @@ function setupWebhooks(client) {
                 const demoUrl = matchData?.demo_url?.[0] || (matchData?.demo_url && typeof matchData.demo_url === 'string' ? matchData.demo_url : null);
 
                 await active.message.edit({
-                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.matchUrl, score, won, demoUrl)]
+                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, score, won)],
+                    components: [buildMatchButtons(active.matchUrl, demoUrl)]
                 });
 
                 const channelId = process.env.CANAL_AVISOS_ID;
@@ -687,7 +720,8 @@ function setupWebhooks(client) {
 
                 if (demoUrl) {
                     await active.message.edit({
-                        embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.matchUrl, active.score, active.won, demoUrl)]
+                        embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won)],
+                        components: [buildMatchButtons(active.matchUrl, demoUrl)]
                     });
                     console.log(`[Faceit Webhook] Embed editado com o link final da demo: ${demoUrl}`);
                 } else {
@@ -715,7 +749,8 @@ function setupWebhooks(client) {
                 console.log(`[Faceit Webhook] Partida cancelada/abortada: ${matchId}`);
 
                 await active.message.edit({
-                    embeds: [buildCancelledEmbed(active.playerNames, active.mapName, active.matchUrl, 'Partida Cancelada ou Abortada na Faceit.')]
+                    embeds: [buildCancelledEmbed(active.playerNames, active.mapName, 'Partida Cancelada ou Abortada na Faceit.')],
+                    components: [buildMatchButtons(active.matchUrl, null)]
                 });
 
                 activeMatches.delete(matchId);
