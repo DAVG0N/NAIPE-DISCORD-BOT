@@ -211,11 +211,72 @@ async function checkAndSendLiveFeedAlerts(client, matchId, active, score) {
     }
 }
 
-async function sendPremadePerformanceSummary(client, matchId, channel) {
+function startMatchPolling(client, matchId) {
+    const active = activeMatches.get(matchId);
+    if (active && active.intervalId) {
+        clearInterval(active.intervalId);
+    }
+
+    const intervalId = setInterval(async () => {
+        try {
+            const matchData = await fetchMatchScore(matchId);
+            if (!matchData) return;
+
+            const activeState = activeMatches.get(matchId);
+            if (!activeState) {
+                clearInterval(intervalId);
+                return;
+            }
+
+            if (!activeState.premadeFaction) {
+                const premadeIds = getPremadeIds();
+                activeState.premadeFaction = getPremadeFactionFromMatchData(matchData, premadeIds);
+            }
+
+            const status = matchData.status;
+            const isLive = status === 'ONGOING' || status === 'LIVE';
+            const score = extractScore(matchData);
+
+            if (isLive) {
+                if (activeState.state === 'ready') {
+                    activeState.state = 'playing';
+                    console.log(`[Faceit Webhook] Partida ${matchId} passou de READY a LIVE/ONGOING.`);
+                }
+
+                await activeState.message.edit({
+                    embeds: [buildPlayingEmbed(activeState.playerNames, activeState.mapName, score)],
+                    components: [buildMatchButtons(activeState.matchUrl, null)]
+                });
+
+                if (score) {
+                    await checkAndSendLiveFeedAlerts(client, matchId, activeState, score);
+                }
+            }
+
+            activeMatches.set(matchId, activeState);
+        } catch (e) {
+            console.error(`[Faceit Webhook] Erro no polling de score para a partida ${matchId}:`, e);
+        }
+    }, POLLING_INTERVAL_MS);
+
+    return intervalId;
+}
+
+async function updateFinishedEmbedWithStats(client, matchId) {
     try {
         const statsData = await fetchMatchStats(matchId);
         if (!statsData || !statsData.rounds || statsData.rounds.length === 0) {
             console.warn(`[Faceit Webhook] Não foi possível obter estatísticas válidas para a partida ${matchId}.`);
+            
+            const active = activeMatches.get(matchId);
+            if (active) {
+                active.premadeStatsText = '⚠️ Não foi possível obter as estatísticas do jogo.';
+                await active.message.edit({
+                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText)],
+                    components: [buildMatchButtons(active.matchUrl, active.demoUrl || null)]
+                });
+                activeMatches.set(matchId, active);
+            }
             return;
         }
 
@@ -254,8 +315,20 @@ async function sendPremadePerformanceSummary(client, matchId, channel) {
             }
         }
 
+        const active = activeMatches.get(matchId);
+        if (!active) {
+            console.log(`[Faceit Webhook] Partida ${matchId} já não está na memória para atualizar estatísticas.`);
+            return;
+        }
+
         if (statsMap.size === 0) {
             console.log(`[Faceit Webhook] Nenhum jogador da premade encontrado nas estatísticas da partida ${matchId}.`);
+            active.premadeStatsText = 'Nenhum jogador da premade participou.';
+            await active.message.edit({
+                embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText)],
+                components: [buildMatchButtons(active.matchUrl, active.demoUrl || null)]
+            });
+            activeMatches.set(matchId, active);
             return;
         }
 
@@ -270,28 +343,32 @@ async function sendPremadePerformanceSummary(client, matchId, channel) {
             premadePlayersStats.push({
                 nickname: entry.nickname,
                 discordId: entry.discordId,
-                kills: entry.kills.toString(),
+                kills: entry.kills,
                 rating: finalRating
             });
         }
 
-        const embed = new EmbedBuilder()
-            .setTitle('📊・Resumo de Desempenho da Premade')
-            .setColor('#FFD700')
-            .setTimestamp();
+        // Ordenar por Kills descrescente
+        premadePlayersStats.sort((a, b) => b.kills - a.kills);
 
-        let descriptionText = 'Estatísticas individuais da nossa premade nesta partida:\n\n';
+        let descriptionText = '';
         for (const pStats of premadePlayersStats) {
             const userMention = pStats.discordId ? `<@${pStats.discordId}>` : `**${pStats.nickname}**`;
             descriptionText += `👤 ${userMention}\n└ 🔫 **Kills:** \`${pStats.kills}\`  •  ⭐ **Rating:** \`${pStats.rating}\`\n\n`;
         }
-        
-        embed.setDescription(descriptionText);
 
-        await channel.send({ embeds: [embed] });
-        console.log(`[Faceit Webhook] Resumo de performance enviado para a partida ${matchId}.`);
+        active.premadeStatsText = descriptionText.trim();
+        const demoUrl = active.demoUrl || null;
+
+        await active.message.edit({
+            embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText)],
+            components: [buildMatchButtons(active.matchUrl, demoUrl)]
+        });
+        
+        activeMatches.set(matchId, active);
+        console.log(`[Faceit Webhook] Embed de partida final editado com resumo de performance (ordenado por kills) para a partida ${matchId}.`);
     } catch (e) {
-        console.error(`[Faceit Webhook] Erro ao enviar resumo de performance para ${matchId}:`, e);
+        console.error(`[Faceit Webhook] Erro ao atualizar embed final com stats para ${matchId}:`, e);
     }
 }
 
@@ -328,17 +405,24 @@ function buildPlayingEmbed(playerNames, mapName, score) {
         .setTimestamp();
 }
 
-function buildFinishedEmbed(playerNames, mapName, score, won) {
+function buildFinishedEmbed(playerNames, mapName, score, won, premadeStatsText = null) {
     const resultIcon = won === true ? '✅' : won === false ? '❌' : '🏁';
     const resultText = won === true ? 'Vitória!' : won === false ? 'Derrota' : 'Resultado Final';
     const scoreText = score
         ? `**${score.team1Name}** ${score.team1} — ${score.team2} **${score.team2Name}**`
         : 'Sem dados';
 
+    let description = `A Premade terminou a partida!\n### Jogadores:\n > ${playerNames}`;
+    if (premadeStatsText) {
+        description += `\n\n### 📊 Desempenho da Premade:\n${premadeStatsText}`;
+    } else {
+        description += `\n\n### 📊 Desempenho da Premade:\n🔄 A carregar estatísticas...`;
+    }
+
     return new EmbedBuilder()
         .setTitle(`${resultIcon}・${resultText}`)
         .setColor(won === true ? '#57F287' : won === false ? '#ED4245' : '#313137')
-        .setDescription(`A Premade terminou a partida!\n### Jogadores:\n > ${playerNames}`)
+        .setDescription(description)
         .addFields(
             { name: '`🗺️` Mapa', value: mapName, inline: true },
             { name: '`📊` Resultado Final', value: scoreText, inline: true }
@@ -488,6 +572,14 @@ function setupWebhooks(client) {
                     matchpointSent: false,
                     overtimeSent: false
                 });
+
+                const intervalId = startMatchPolling(client, matchId);
+                const activeState = activeMatches.get(matchId);
+                if (activeState) {
+                    activeState.intervalId = intervalId;
+                    activeMatches.set(matchId, activeState);
+                }
+
                 return;
             }
 
@@ -514,32 +606,7 @@ function setupWebhooks(client) {
                         components: [buildMatchButtons(active.matchUrl, null)]
                     });
 
-                    // Inicia polling para atualizar o score
-                    const intervalId = setInterval(async () => {
-                        try {
-                            const matchData = await fetchMatchScore(matchId);
-                            if (!matchData) return;
-
-                            if (!active.premadeFaction) {
-                                const premadeIds = getPremadeIds();
-                                active.premadeFaction = getPremadeFactionFromMatchData(matchData, premadeIds);
-                            }
-
-                            const score = extractScore(matchData);
-                            await active.message.edit({ 
-                                embeds: [buildPlayingEmbed(active.playerNames, active.mapName, score)],
-                                components: [buildMatchButtons(active.matchUrl, null)]
-                            });
-                            console.log(`[Faceit Webhook] Score atualizado para ${matchId}: ${score ? `${score.team1}-${score.team2}` : 'sem dados'}`);
-
-                            if (score) {
-                                await checkAndSendLiveFeedAlerts(client, matchId, active, score);
-                            }
-                        } catch (e) {
-                            console.error('[Faceit Webhook] Erro no polling:', e);
-                        }
-                    }, POLLING_INTERVAL_MS);
-
+                    const intervalId = startMatchPolling(client, matchId);
                     active.intervalId = intervalId;
                     active.state = 'playing';
                     activeMatches.set(matchId, active);
@@ -611,31 +678,7 @@ function setupWebhooks(client) {
                     premadeFaction
                 };
 
-                // Inicia polling para atualizar o score
-                const intervalId = setInterval(async () => {
-                    try {
-                        const matchData = await fetchMatchScore(matchId);
-                        if (!matchData) return;
-
-                        if (!activeState.premadeFaction) {
-                            activeState.premadeFaction = getPremadeFactionFromMatchData(matchData, premadeIds);
-                        }
-
-                        const score = extractScore(matchData);
-                        await msg.edit({ 
-                            embeds: [buildPlayingEmbed(playerNames, mapName, score)],
-                            components: [buildMatchButtons(matchUrl, null)]
-                        });
-                        console.log(`[Faceit Webhook] Score atualizado para ${matchId}: ${score ? `${score.team1}-${score.team2}` : 'sem dados'}`);
-
-                        if (score) {
-                            await checkAndSendLiveFeedAlerts(client, matchId, activeState, score);
-                        }
-                    } catch (e) {
-                        console.error('[Faceit Webhook] Erro no polling:', e);
-                    }
-                }, POLLING_INTERVAL_MS);
-
+                const intervalId = startMatchPolling(client, matchId);
                 activeState.intervalId = intervalId;
                 activeMatches.set(matchId, activeState);
 
@@ -669,26 +712,26 @@ function setupWebhooks(client) {
                 const won = matchData ? didPremadeWin(matchData, premadeIds) : null;
                 const demoUrl = matchData?.demo_url?.[0] || (matchData?.demo_url && typeof matchData.demo_url === 'string' ? matchData.demo_url : null);
 
+                active.score = score;
+                active.won = won;
+                active.demoUrl = demoUrl;
+
                 await active.message.edit({
-                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, score, won)],
+                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, score, won, null)],
                     components: [buildMatchButtons(active.matchUrl, demoUrl)]
                 });
 
-                const channelId = process.env.CANAL_AVISOS_ID;
-                if (channelId) {
-                    const channel = await client.channels.fetch(channelId).catch(() => null);
-                    if (channel) {
-                        sendPremadePerformanceSummary(client, matchId, channel);
-                    }
-                }
+                // Inicia busca e atualização de estatísticas
+                updateFinishedEmbedWithStats(client, matchId);
 
                 if (demoUrl) {
-                    activeMatches.delete(matchId);
-                    activeMatchesAlerts.delete(matchId);
+                    // Dar 15 segundos para atualizar as estatísticas antes de apagar a partida da memória
+                    setTimeout(() => {
+                        activeMatches.delete(matchId);
+                        activeMatchesAlerts.delete(matchId);
+                    }, 15000);
                 } else {
                     active.state = 'finished';
-                    active.won = won;
-                    active.score = score;
                     active.intervalId = null;
                     activeMatches.set(matchId, active);
                     activeMatchesAlerts.delete(matchId);
@@ -719,8 +762,9 @@ function setupWebhooks(client) {
                 const demoUrl = matchData?.demo_url?.[0] || (matchData?.demo_url && typeof matchData.demo_url === 'string' ? matchData.demo_url : null) || payload.demo_url;
 
                 if (demoUrl) {
+                    active.demoUrl = demoUrl;
                     await active.message.edit({
-                        embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won)],
+                        embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText)],
                         components: [buildMatchButtons(active.matchUrl, demoUrl)]
                     });
                     console.log(`[Faceit Webhook] Embed editado com o link final da demo: ${demoUrl}`);
