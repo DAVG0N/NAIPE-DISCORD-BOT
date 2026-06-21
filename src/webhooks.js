@@ -397,7 +397,7 @@ function buildPlayingEmbed(playerNames, mapName, score, alertsLog) {
         titleText = `🎮・Estamos a Jogar! — ${score.team1} - ${score.team2}`;
     }
 
-    let description = `A Premade está a jogar!\n### Jogadores em campo:\n > ${playerNames}`;
+    let description = `A Premade está a jogar!\n### Jogadores em campo:\n${playerNames}`;
     if (alertsLog && alertsLog.length > 0) {
         description += `\n\n\`\`\`\n${alertsLog.join('\n')}\n\`\`\``;
     }
@@ -427,15 +427,9 @@ function buildFinishedEmbed(playerNames, mapName, score, won, premadeStatsText =
         titleText = `${resultIcon}・${resultText} — ${score.team1} - ${score.team2} para a equipa ${winnerName}`;
     }
 
-    let description = `A Premade terminou a partida!\n### Jogadores:\n > ${playerNames}`;
+    let description = `A Premade terminou a partida!\n### Jogadores:\n${premadeStatsText || (playerNames + '\n\n🔄 *A carregar estatísticas...*')}`;
     if (alertsLog && alertsLog.length > 0) {
         description += `\n\n\`\`\`\n${alertsLog.join('\n')}\n\`\`\``;
-    }
-
-    if (premadeStatsText) {
-        description += `\n\n### 📊 Desempenho da Premade:\n${premadeStatsText}`;
-    } else {
-        description += `\n\n### 📊 Desempenho da Premade:\n🔄 A carregar estatísticas...`;
     }
 
     return new EmbedBuilder()
@@ -453,7 +447,7 @@ function buildWarmupEmbed(playerNames, mapName) {
     return new EmbedBuilder()
         .setTitle('🔥・Partida Encontrada!')
         .setColor('#FF5500')
-        .setDescription(`A Premade está em aquecimento!\n### Jogadores em campo:\n > ${playerNames}`)
+        .setDescription(`A Premade está em aquecimento!\n### Jogadores em campo:\n${playerNames}`)
         .addFields(
             { name: '`🗺️` Mapa', value: mapName, inline: true },
             { name: '`🚦` Estado', value: '🔄 No aquecimento / Vetoes prontos', inline: true }
@@ -465,7 +459,7 @@ function buildCancelledEmbed(playerNames, mapName, reason) {
     return new EmbedBuilder()
         .setTitle('❌・Partida Cancelada')
         .setColor('#ED4245')
-        .setDescription(`A partida da Premade foi cancelada.\n### Jogadores:\n > ${playerNames}`)
+        .setDescription(`A partida da Premade foi cancelada.\n### Jogadores:\n${playerNames}`)
         .addFields(
             { name: '`🗺️` Mapa', value: mapName, inline: true },
             { name: '`ℹ️` Motivo', value: reason || 'Jogadores não se ligaram a tempo ou partida abortada.', inline: true }
@@ -565,9 +559,16 @@ function setupWebhooks(client) {
 
                 const mapName = payload.entity?.name || 'Desconhecido';
                 const matchUrl = `https://www.faceit.com/en/cs2/room/${matchId}`;
-                const playerNames = premadeInMatch.map(p => p.nickname).join(', ');
+                
+                const nicknames = premadeInMatch.map(p => p.nickname).join(', ');
+                const mapping = getPremadeMapping();
+                const playerNames = premadeInMatch.map(p => {
+                    const pid = p.id || p.player_id;
+                    const dbPlayer = mapping.get(pid);
+                    return dbPlayer?.discordId ? `<@${dbPlayer.discordId}>` : (p.nickname || dbPlayer?.nickname || 'Jogador');
+                }).map(name => `> ${name}`).join('\n');
 
-                console.log(`[Faceit Webhook] Partida em aquecimento (Ready): ${matchId} | Premade: ${playerNames}`);
+                console.log(`[Faceit Webhook] Partida em aquecimento (Ready): ${matchId} | Premade: ${nicknames}`);
 
                 const msg = await channel.send({ 
                     embeds: [buildWarmupEmbed(playerNames, mapName)],
@@ -682,9 +683,16 @@ function setupWebhooks(client) {
 
                 const mapName = payload.entity?.name || 'Desconhecido';
                 const matchUrl = `https://www.faceit.com/en/cs2/room/${matchId}`;
-                const playerNames = premadeInMatch.map(p => p.nickname).join(', ');
+                
+                const nicknames = premadeInMatch.map(p => p.nickname).join(', ');
+                const mapping = getPremadeMapping();
+                const playerNames = premadeInMatch.map(p => {
+                    const pid = p.id || p.player_id;
+                    const dbPlayer = mapping.get(pid);
+                    return dbPlayer?.discordId ? `<@${dbPlayer.discordId}>` : (p.nickname || dbPlayer?.nickname || 'Jogador');
+                }).map(name => `> ${name}`).join('\n');
 
-                console.log(`[Faceit Webhook] Partida live (Playing - fallback): ${matchId} | Premade: ${playerNames}`);
+                console.log(`[Faceit Webhook] Partida live (Playing - fallback): ${matchId} | Premade: ${nicknames}`);
 
                 const msg = await channel.send({ 
                     embeds: [buildPlayingEmbed(playerNames, mapName, null, [])],
