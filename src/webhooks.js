@@ -149,13 +149,10 @@ async function checkAndSendLiveFeedAlerts(client, matchId, active, score) {
 
     const alerts = activeMatchesAlerts.get(matchId);
     const totalScore = score.team1 + score.team2;
-    const channelId = process.env.CANAL_AVISOS_ID;
-    if (!channelId) return;
+
+    active.alertsLog = active.alertsLog || [];
 
     try {
-        const channel = await client.channels.fetch(channelId).catch(() => null);
-        if (!channel) return;
-
         // 1. Half-Time alert
         if (totalScore === 12 && !alerts.halftimeSent) {
             alerts.halftimeSent = true;
@@ -183,8 +180,9 @@ async function checkAndSendLiveFeedAlerts(client, matchId, active, score) {
                 opponentScore = score.team2;
             }
 
-            await channel.send(`🔄 Mudança de lado! **${ourTeamName}** ${ourTeamScore} - ${opponentScore} **${opponentName}**`);
-            console.log(`[Faceit Webhook] Alerta Half-Time enviado para ${matchId}: ${ourTeamScore}-${opponentScore}`);
+            const alertText = `🔄 Mudança de lado! ${ourTeamName} ${ourTeamScore} - ${opponentScore} ${opponentName}`;
+            active.alertsLog.push(alertText);
+            console.log(`[Faceit Webhook] Alerta Half-Time registado para ${matchId}: ${ourTeamScore}-${opponentScore}`);
         }
 
         // 2. Match Point alert
@@ -193,9 +191,9 @@ async function checkAndSendLiveFeedAlerts(client, matchId, active, score) {
             activeMatchesAlerts.set(matchId, alerts);
 
             const matchPointTeamName = score.team1 === 12 ? score.team1Name : score.team2Name;
-
-            await channel.send(`🔥 MATCH POINT para **${matchPointTeamName}**!`);
-            console.log(`[Faceit Webhook] Alerta Match Point enviado para ${matchId}: ${matchPointTeamName}`);
+            const alertText = `🔥 MATCH POINT para ${matchPointTeamName}!`;
+            active.alertsLog.push(alertText);
+            console.log(`[Faceit Webhook] Alerta Match Point registado para ${matchId}: ${matchPointTeamName}`);
         }
 
         // 3. Overtime alert
@@ -203,11 +201,12 @@ async function checkAndSendLiveFeedAlerts(client, matchId, active, score) {
             alerts.overtimeSent = true;
             activeMatchesAlerts.set(matchId, alerts);
 
-            await channel.send(`🥵 OVERTIME! Puxem pelas cadeiras!`);
-            console.log(`[Faceit Webhook] Alerta Overtime enviado para ${matchId}`);
+            const alertText = `🥵 OVERTIME! Puxem pelas cadeiras!`;
+            active.alertsLog.push(alertText);
+            console.log(`[Faceit Webhook] Alerta Overtime registado para ${matchId}`);
         }
     } catch (e) {
-        console.error(`[Faceit Webhook] Erro ao enviar alertas do Live Feed para ${matchId}:`, e);
+        console.error(`[Faceit Webhook] Erro ao processar alertas do Live Feed para ${matchId}:`, e);
     }
 }
 
@@ -243,14 +242,14 @@ function startMatchPolling(client, matchId) {
                     console.log(`[Faceit Webhook] Partida ${matchId} passou de READY a LIVE/ONGOING.`);
                 }
 
-                await activeState.message.edit({
-                    embeds: [buildPlayingEmbed(activeState.playerNames, activeState.mapName, score)],
-                    components: [buildMatchButtons(activeState.matchUrl, null)]
-                });
-
                 if (score) {
                     await checkAndSendLiveFeedAlerts(client, matchId, activeState, score);
                 }
+
+                await activeState.message.edit({
+                    embeds: [buildPlayingEmbed(activeState.playerNames, activeState.mapName, score, activeState.alertsLog)],
+                    components: [buildMatchButtons(activeState.matchUrl, null)]
+                });
             }
 
             activeMatches.set(matchId, activeState);
@@ -272,7 +271,7 @@ async function updateFinishedEmbedWithStats(client, matchId) {
             if (active) {
                 active.premadeStatsText = '⚠️ Não foi possível obter as estatísticas do jogo.';
                 await active.message.edit({
-                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText)],
+                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText, active.alertsLog)],
                     components: [buildMatchButtons(active.matchUrl, active.demoUrl || null)]
                 });
                 activeMatches.set(matchId, active);
@@ -325,7 +324,7 @@ async function updateFinishedEmbedWithStats(client, matchId) {
             console.log(`[Faceit Webhook] Nenhum jogador da premade encontrado nas estatísticas da partida ${matchId}.`);
             active.premadeStatsText = 'Nenhum jogador da premade participou.';
             await active.message.edit({
-                embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText)],
+                embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText, active.alertsLog)],
                 components: [buildMatchButtons(active.matchUrl, active.demoUrl || null)]
             });
             activeMatches.set(matchId, active);
@@ -361,7 +360,7 @@ async function updateFinishedEmbedWithStats(client, matchId) {
         const demoUrl = active.demoUrl || null;
 
         await active.message.edit({
-            embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText)],
+            embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText, active.alertsLog)],
             components: [buildMatchButtons(active.matchUrl, demoUrl)]
         });
         
@@ -388,15 +387,25 @@ async function fetchMatchScore(matchId) {
     }
 }
 
-function buildPlayingEmbed(playerNames, mapName, score) {
+function buildPlayingEmbed(playerNames, mapName, score, alertsLog) {
     const scoreText = score
         ? `**${score.team1Name}** ${score.team1} — ${score.team2} **${score.team2Name}**`
         : '🔄 A aguardar score...';
 
+    let titleText = '🎮・Estamos a Jogar!';
+    if (score) {
+        titleText = `🎮・Estamos a Jogar! — ${score.team1} - ${score.team2}`;
+    }
+
+    let description = `A Premade está a jogar!\n### Jogadores em campo:\n > ${playerNames}`;
+    if (alertsLog && alertsLog.length > 0) {
+        description += `\n\n\`\`\`\n${alertsLog.join('\n')}\n\`\`\``;
+    }
+
     return new EmbedBuilder()
-        .setTitle('🎮・Estamos a Jogar!')
+        .setTitle(titleText)
         .setColor('#313137')
-        .setDescription(`A Premade está a jogar!\n### Jogadores em campo:\n > ${playerNames}`)
+        .setDescription(description)
         .addFields(
             { name: '`🗺️` Mapa', value: mapName, inline: true },
             { name: '`📊` Score Atual', value: scoreText, inline: true }
@@ -405,14 +414,24 @@ function buildPlayingEmbed(playerNames, mapName, score) {
         .setTimestamp();
 }
 
-function buildFinishedEmbed(playerNames, mapName, score, won, premadeStatsText = null) {
+function buildFinishedEmbed(playerNames, mapName, score, won, premadeStatsText = null, alertsLog = null) {
     const resultIcon = won === true ? '✅' : won === false ? '❌' : '🏁';
-    const resultText = won === true ? 'Vitória!' : won === false ? 'Derrota' : 'Resultado Final';
+    const resultText = won === true ? 'Vitória' : won === false ? 'Derrota' : 'Resultado Final';
     const scoreText = score
         ? `**${score.team1Name}** ${score.team1} — ${score.team2} **${score.team2Name}**`
         : 'Sem dados';
 
+    let titleText = `${resultIcon}・${resultText}`;
+    if (score) {
+        const winnerName = score.winnerId === 'faction1' ? score.team1Name : (score.winnerId === 'faction2' ? score.team2Name : 'outra equipa');
+        titleText = `${resultIcon}・${resultText} — ${score.team1} - ${score.team2} para a equipa ${winnerName}`;
+    }
+
     let description = `A Premade terminou a partida!\n### Jogadores:\n > ${playerNames}`;
+    if (alertsLog && alertsLog.length > 0) {
+        description += `\n\n\`\`\`\n${alertsLog.join('\n')}\n\`\`\``;
+    }
+
     if (premadeStatsText) {
         description += `\n\n### 📊 Desempenho da Premade:\n${premadeStatsText}`;
     } else {
@@ -420,7 +439,7 @@ function buildFinishedEmbed(playerNames, mapName, score, won, premadeStatsText =
     }
 
     return new EmbedBuilder()
-        .setTitle(`${resultIcon}・${resultText}`)
+        .setTitle(titleText)
         .setColor(won === true ? '#57F287' : won === false ? '#ED4245' : '#313137')
         .setDescription(description)
         .addFields(
@@ -564,7 +583,8 @@ function setupWebhooks(client) {
                     matchUrl,
                     state: 'ready',
                     intervalId: null,
-                    premadeFaction
+                    premadeFaction,
+                    alertsLog: []
                 });
 
                 activeMatchesAlerts.set(matchId, {
@@ -601,8 +621,12 @@ function setupWebhooks(client) {
                         active.premadeFaction = getPremadeFaction(payload, premadeIds);
                     }
 
+                    if (!active.alertsLog) {
+                        active.alertsLog = [];
+                    }
+
                     await active.message.edit({ 
-                        embeds: [buildPlayingEmbed(active.playerNames, active.mapName, null)],
+                        embeds: [buildPlayingEmbed(active.playerNames, active.mapName, null, active.alertsLog)],
                         components: [buildMatchButtons(active.matchUrl, null)]
                     });
 
@@ -663,7 +687,7 @@ function setupWebhooks(client) {
                 console.log(`[Faceit Webhook] Partida live (Playing - fallback): ${matchId} | Premade: ${playerNames}`);
 
                 const msg = await channel.send({ 
-                    embeds: [buildPlayingEmbed(playerNames, mapName, null)],
+                    embeds: [buildPlayingEmbed(playerNames, mapName, null, [])],
                     components: [buildMatchButtons(matchUrl, null)]
                 });
 
@@ -675,7 +699,8 @@ function setupWebhooks(client) {
                     mapName,
                     matchUrl,
                     state: 'playing',
-                    premadeFaction
+                    premadeFaction,
+                    alertsLog: []
                 };
 
                 const intervalId = startMatchPolling(client, matchId);
@@ -717,7 +742,7 @@ function setupWebhooks(client) {
                 active.demoUrl = demoUrl;
 
                 await active.message.edit({
-                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, score, won, null)],
+                    embeds: [buildFinishedEmbed(active.playerNames, active.mapName, score, won, null, active.alertsLog)],
                     components: [buildMatchButtons(active.matchUrl, demoUrl)]
                 });
 
@@ -764,7 +789,7 @@ function setupWebhooks(client) {
                 if (demoUrl) {
                     active.demoUrl = demoUrl;
                     await active.message.edit({
-                        embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText)],
+                        embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText, active.alertsLog)],
                         components: [buildMatchButtons(active.matchUrl, demoUrl)]
                     });
                     console.log(`[Faceit Webhook] Embed editado com o link final da demo: ${demoUrl}`);
