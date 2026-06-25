@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const LEADERBOARD_FILE = path.join(__dirname, '../data/bd.json');
-const POLLING_INTERVAL_MS = 2 * 60 * 1000; // 2 minutos
+const POLLING_INTERVAL_MS = 30 * 1000; // 30 segundos
 
 // Mapa de partidas ativas: matchId -> { intervalId, message, playerNames, matchUrl }
 const activeMatches = new Map();
