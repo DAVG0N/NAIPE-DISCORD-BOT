@@ -456,9 +456,9 @@ function buildPlayingEmbed(playerNames, mapName, score, alertsLog) {
         ? `**${score.team1Name}** ${score.team1} — ${score.team2} **${score.team2Name}**`
         : '🔄 A aguardar score...';
 
-    let titleText = '🎮・Estamos a Jogar!';
+    let titleText = '🔴・Live!';
     if (score) {
-        titleText = `🎮・Estamos a Jogar! — ${scoreText}`;
+        titleText = `🔴・Live! — ${scoreText}`;
     }
 
     let description = `### Jogadores em campo:\n${playerNames}`;
@@ -470,7 +470,7 @@ function buildPlayingEmbed(playerNames, mapName, score, alertsLog) {
         .setTitle(titleText)
         .setColor('#313137')
         .setDescription(description)
-        .setFooter({ text: 'Score atualizado a cada 2 minutos' })
+        .setFooter({ text: 'Embed atualizado em tempo real!' })
         .setTimestamp();
 
     const thumbnailUrl = getMapThumbnail(mapName);
@@ -506,9 +506,6 @@ function buildFinishedEmbed(playerNames, mapName, score, won, premadeStatsText =
         .setTitle(titleText)
         .setColor(won === true ? '#57F287' : won === false ? '#ED4245' : '#313137')
         .setDescription(description)
-        .addFields(
-            { name: '`📊` Resultado Final', value: scoreText, inline: true }
-        )
         .setTimestamp();
 
     const thumbnailUrl = getMapThumbnail(mapName);
