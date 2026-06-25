@@ -36,6 +36,9 @@ const MAP_THUMBNAILS = {
     'Train': 'https://static.wikia.nocookie.net/cswikia/images/2/2c/De_train_cs2_new.png/revision/latest/scale-to-width-down/1000?cb=20250730205931'
 };
 
+const DEFAULT_MAP_THUMBNAIL = 'https://upload.wikimedia.org/wikipedia/commons/e/e3/Counter_Strike_2_Logo.png';
+
+
 function getMapThumbnail(mapName) {
     if (!mapName) return null;
     const normalized = mapName.toLowerCase().trim();
@@ -345,6 +348,8 @@ async function updateFinishedEmbedWithStats(client, matchId) {
                         const dbPlayer = premadeMapping.get(playerId);
                         const playerStats = player.player_stats || {};
                         const kills = parseInt(playerStats['Kills'] || '0', 10);
+                        const deaths = parseInt(playerStats['Deaths'] || '0', 10);
+                        const assists = parseInt(playerStats['Assists'] || '0', 10);
                         const ratingStr = playerStats['FACEIT Rating'] || playerStats['Match Rating'] || playerStats['rating'];
                         const rating = ratingStr && !isNaN(parseFloat(ratingStr)) ? parseFloat(ratingStr) : null;
 
@@ -353,12 +358,16 @@ async function updateFinishedEmbedWithStats(client, matchId) {
                                 nickname: player.nickname || dbPlayer.nickname,
                                 discordId: dbPlayer.discordId,
                                 kills: 0,
+                                deaths: 0,
+                                assists: 0,
                                 ratings: []
                             });
                         }
 
                         const entry = statsMap.get(playerId);
                         entry.kills += kills;
+                        entry.deaths += deaths;
+                        entry.assists += assists;
                         if (rating !== null) {
                             entry.ratings.push(rating);
                         }
@@ -396,6 +405,8 @@ async function updateFinishedEmbedWithStats(client, matchId) {
                 nickname: entry.nickname,
                 discordId: entry.discordId,
                 kills: entry.kills,
+                deaths: entry.deaths,
+                assists: entry.assists,
                 rating: finalRating
             });
         }
@@ -406,7 +417,7 @@ async function updateFinishedEmbedWithStats(client, matchId) {
         let descriptionText = '';
         for (const pStats of premadePlayersStats) {
             const userMention = pStats.discordId ? `<@${pStats.discordId}>` : `**${pStats.nickname}**`;
-            descriptionText += `> ${userMention} **Kills:** \`${pStats.kills}\`  |  **Rating:** \`${pStats.rating}\`\n\n`;
+            descriptionText += `> ${userMention} **K/D/A:** \`${pStats.kills}/${pStats.deaths}/${pStats.assists}\`  |  **Rating:** \`${pStats.rating}\`\n\n`;
         }
 
         active.premadeStatsText = descriptionText.trim();
@@ -466,6 +477,7 @@ function buildPlayingEmbed(playerNames, mapName, score, alertsLog) {
     if (thumbnailUrl) {
         embed.setThumbnail(thumbnailUrl);
     } else {
+        embed.setThumbnail(DEFAULT_MAP_THUMBNAIL);
         embed.addFields({ name: '`🗺️` Mapa', value: mapName, inline: true });
     }
 
@@ -503,6 +515,7 @@ function buildFinishedEmbed(playerNames, mapName, score, won, premadeStatsText =
     if (thumbnailUrl) {
         embed.setThumbnail(thumbnailUrl);
     } else {
+        embed.setThumbnail(DEFAULT_MAP_THUMBNAIL);
         embed.addFields({ name: '`🗺️` Mapa', value: mapName, inline: true });
     }
 
@@ -523,6 +536,7 @@ function buildWarmupEmbed(playerNames, mapName) {
     if (thumbnailUrl) {
         embed.setThumbnail(thumbnailUrl);
     } else {
+        embed.setThumbnail(DEFAULT_MAP_THUMBNAIL);
         embed.addFields({ name: '`🗺️` Mapa', value: mapName, inline: true });
     }
 
@@ -543,6 +557,7 @@ function buildCancelledEmbed(playerNames, mapName, reason) {
     if (thumbnailUrl) {
         embed.setThumbnail(thumbnailUrl);
     } else {
+        embed.setThumbnail(DEFAULT_MAP_THUMBNAIL);
         embed.addFields({ name: '`🗺️` Mapa', value: mapName, inline: true });
     }
 
