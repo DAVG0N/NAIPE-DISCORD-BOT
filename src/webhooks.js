@@ -12,15 +12,59 @@ const activeMatches = new Map();
 // Mapa de alertas de partidas: matchId -> { halftimeSent, matchpointSent, overtimeSent }
 const activeMatchesAlerts = new Map();
 
+// Mapeamento de nome/código do mapa para a URL da imagem da thumbnail
+const MAP_THUMBNAILS = {
+    'de_mirage': 'https://static.wikia.nocookie.net/cswikia/images/f/f5/De_mirage_cs2.png/revision/latest?cb=20230807124319',
+    'Mirage': 'https://static.wikia.nocookie.net/cswikia/images/f/f5/De_mirage_cs2.png/revision/latest?cb=20230807124319',
+    'de_inferno': 'https://static.wikia.nocookie.net/cswikia/images/1/17/Cs2_inferno_remake.png/revision/latest/scale-to-width-down/1000?cb=20260304235624',
+    'Inferno': 'https://static.wikia.nocookie.net/cswikia/images/1/17/Cs2_inferno_remake.png/revision/latest/scale-to-width-down/1000?cb=20260304235624',
+    'de_dust2': 'https://static.wikia.nocookie.net/cswikia/images/1/16/Cs2_dust2.png/revision/latest/scale-to-width-down/1000?cb=20230913150804',
+    'Dust2': 'https://static.wikia.nocookie.net/cswikia/images/1/16/Cs2_dust2.png/revision/latest/scale-to-width-down/1000?cb=20230913150804',
+    'de_nuke': 'https://static.wikia.nocookie.net/cswikia/images/d/d6/De_nuke_cs2.png/revision/latest/scale-to-width-down/1000?cb=20240426010253',
+    'Nuke': 'https://static.wikia.nocookie.net/cswikia/images/d/d6/De_nuke_cs2.png/revision/latest/scale-to-width-down/1000?cb=20240426010253',
+    'de_ancient': 'https://static.wikia.nocookie.net/cswikia/images/5/5c/De_ancient_cs2.png/revision/latest/scale-to-width-down/1000?cb=20250815011913',
+    'Ancient': 'https://static.wikia.nocookie.net/cswikia/images/5/5c/De_ancient_cs2.png/revision/latest/scale-to-width-down/1000?cb=20250815011913',
+    'de_anubis': 'https://static.wikia.nocookie.net/cswikia/images/a/a0/CS2_Anubis_B_site.png/revision/latest/scale-to-width-down/1000?cb=20260122021359',
+    'Anubis': 'https://static.wikia.nocookie.net/cswikia/images/a/a0/CS2_Anubis_B_site.png/revision/latest/scale-to-width-down/1000?cb=20260122021359',
+    'de_vertigo': 'https://static.wikia.nocookie.net/cswikia/images/8/88/De_vertigo_cs2.jpg/revision/latest/scale-to-width-down/1000?cb=20231009185617',
+    'Vertigo': 'https://static.wikia.nocookie.net/cswikia/images/8/88/De_vertigo_cs2.jpg/revision/latest/scale-to-width-down/1000?cb=20231009185617',
+    'de_cache': 'https://static.wikia.nocookie.net/cswikia/images/5/5b/De_cache_cs2.png/revision/latest/scale-to-width-down/1000?cb=20260429100503',
+    'Cache': 'https://static.wikia.nocookie.net/cswikia/images/5/5b/De_cache_cs2.png/revision/latest/scale-to-width-down/1000?cb=20260429100503',
+    'de_overpass': 'https://static.wikia.nocookie.net/cswikia/images/5/55/Overpass_loading_screen.png/revision/latest/scale-to-width-down/1000?cb=20250730205333',
+    'Overpass': 'https://static.wikia.nocookie.net/cswikia/images/5/55/Overpass_loading_screen.png/revision/latest/scale-to-width-down/1000?cb=20250730205333',
+    'de_train': 'https://static.wikia.nocookie.net/cswikia/images/2/2c/De_train_cs2_new.png/revision/latest/scale-to-width-down/1000?cb=20250730205931',
+    'Train': 'https://static.wikia.nocookie.net/cswikia/images/2/2c/De_train_cs2_new.png/revision/latest/scale-to-width-down/1000?cb=20250730205931'
+};
+
+function getMapThumbnail(mapName) {
+    if (!mapName) return null;
+    const normalized = mapName.toLowerCase().trim();
+    const key = Object.keys(MAP_THUMBNAILS).find(k => k.toLowerCase() === normalized);
+    return key ? MAP_THUMBNAILS[key] : null;
+}
+
+function extractMapName(matchData) {
+    if (!matchData) return null;
+    const pickedMapCode = matchData.voting?.map?.pick?.[0];
+    if (!pickedMapCode) return null;
+    const mapEntity = matchData.voting?.map?.entities?.find(e =>
+        e.guid === pickedMapCode ||
+        e.game_map_id === pickedMapCode ||
+        e.class_name === pickedMapCode
+    );
+    return mapEntity ? mapEntity.name : pickedMapCode;
+}
+
+
 function buildMatchButtons(matchUrl, demoUrl = null) {
     const row = new ActionRowBuilder();
-    
+
     // Botão 1: Match Room (Sempre ativo)
     const matchRoomBtn = new ButtonBuilder()
         .setLabel('Match Room')
         .setStyle(ButtonStyle.Link)
         .setURL(matchUrl);
-        
+
     // Botão 2: GOTV Demo
     let demoBtn;
     if (demoUrl) {
@@ -36,7 +80,7 @@ function buildMatchButtons(matchUrl, demoUrl = null) {
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(true);
     }
-    
+
     row.addComponents(matchRoomBtn, demoBtn);
     return row;
 }
@@ -107,10 +151,10 @@ function getPremadeMapping() {
 async function fetchMatchStats(matchId) {
     const apiKey = process.env.FACEIT_API_KEY;
     if (!apiKey) return null;
-    
+
     const url = `https://open.faceit.com/data/v4/matches/${matchId}/stats`;
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-    
+
     for (let attempt = 1; attempt <= 4; attempt++) {
         try {
             console.log(`[Faceit Webhook] A tentar obter estatísticas da partida ${matchId} (Tentativa ${attempt}/4)...`);
@@ -128,7 +172,7 @@ async function fetchMatchStats(matchId) {
         } catch (e) {
             console.error(`[Faceit Webhook] Erro na tentativa ${attempt} de obter stats para ${matchId}:`, e);
         }
-        
+
         if (attempt < 4) {
             await sleep(3000);
         }
@@ -138,7 +182,7 @@ async function fetchMatchStats(matchId) {
 
 async function checkAndSendLiveFeedAlerts(client, matchId, active, score) {
     if (!score) return;
-    
+
     if (!activeMatchesAlerts.has(matchId)) {
         activeMatchesAlerts.set(matchId, {
             halftimeSent: false,
@@ -227,6 +271,15 @@ function startMatchPolling(client, matchId) {
                 return;
             }
 
+            // Tenta obter o nome real do mapa a partir da API se ainda não o tivermos
+            if (!activeState.mapName || activeState.mapName === 'Desconhecido' || activeState.mapName.toLowerCase().includes('5v5')) {
+                const apiMapName = extractMapName(matchData);
+                if (apiMapName) {
+                    activeState.mapName = apiMapName;
+                    console.log(`[Faceit Webhook] Nome do mapa atualizado via API para a partida ${matchId}: ${apiMapName}`);
+                }
+            }
+
             if (!activeState.premadeFaction) {
                 const premadeIds = getPremadeIds();
                 activeState.premadeFaction = getPremadeFactionFromMatchData(matchData, premadeIds);
@@ -266,7 +319,7 @@ async function updateFinishedEmbedWithStats(client, matchId) {
         const statsData = await fetchMatchStats(matchId);
         if (!statsData || !statsData.rounds || statsData.rounds.length === 0) {
             console.warn(`[Faceit Webhook] Não foi possível obter estatísticas válidas para a partida ${matchId}.`);
-            
+
             const active = activeMatches.get(matchId);
             if (active) {
                 active.premadeStatsText = '⚠️ Não foi possível obter as estatísticas do jogo.';
@@ -294,7 +347,7 @@ async function updateFinishedEmbedWithStats(client, matchId) {
                         const kills = parseInt(playerStats['Kills'] || '0', 10);
                         const ratingStr = playerStats['FACEIT Rating'] || playerStats['Match Rating'] || playerStats['rating'];
                         const rating = ratingStr && !isNaN(parseFloat(ratingStr)) ? parseFloat(ratingStr) : null;
-                        
+
                         if (!statsMap.has(playerId)) {
                             statsMap.set(playerId, {
                                 nickname: player.nickname || dbPlayer.nickname,
@@ -303,7 +356,7 @@ async function updateFinishedEmbedWithStats(client, matchId) {
                                 ratings: []
                             });
                         }
-                        
+
                         const entry = statsMap.get(playerId);
                         entry.kills += kills;
                         if (rating !== null) {
@@ -353,7 +406,7 @@ async function updateFinishedEmbedWithStats(client, matchId) {
         let descriptionText = '';
         for (const pStats of premadePlayersStats) {
             const userMention = pStats.discordId ? `<@${pStats.discordId}>` : `**${pStats.nickname}**`;
-            descriptionText += `👤 ${userMention}\n└ 🔫 **Kills:** \`${pStats.kills}\`  •  ⭐ **Rating:** \`${pStats.rating}\`\n\n`;
+            descriptionText += `> ${userMention} **Kills:** \`${pStats.kills}\`  |  **Rating:** \`${pStats.rating}\`\n\n`;
         }
 
         active.premadeStatsText = descriptionText.trim();
@@ -363,7 +416,7 @@ async function updateFinishedEmbedWithStats(client, matchId) {
             embeds: [buildFinishedEmbed(active.playerNames, active.mapName, active.score, active.won, active.premadeStatsText, active.alertsLog)],
             components: [buildMatchButtons(active.matchUrl, demoUrl)]
         });
-        
+
         activeMatches.set(matchId, active);
         console.log(`[Faceit Webhook] Embed de partida final editado com resumo de performance (ordenado por kills) para a partida ${matchId}.`);
     } catch (e) {
@@ -394,24 +447,29 @@ function buildPlayingEmbed(playerNames, mapName, score, alertsLog) {
 
     let titleText = '🎮・Estamos a Jogar!';
     if (score) {
-        titleText = `🎮・Estamos a Jogar! — ${score.team1} - ${score.team2}`;
+        titleText = `🎮・Estamos a Jogar! — ${scoreText}`;
     }
 
-    let description = `A Premade está a jogar!\n### Jogadores em campo:\n${playerNames}`;
+    let description = `### Jogadores em campo:\n${playerNames}`;
     if (alertsLog && alertsLog.length > 0) {
         description += `\n\n\`\`\`\n${alertsLog.join('\n')}\n\`\`\``;
     }
 
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
         .setTitle(titleText)
         .setColor('#313137')
         .setDescription(description)
-        .addFields(
-            { name: '`🗺️` Mapa', value: mapName, inline: true },
-            { name: '`📊` Score Atual', value: scoreText, inline: true }
-        )
         .setFooter({ text: 'Score atualizado a cada 2 minutos' })
         .setTimestamp();
+
+    const thumbnailUrl = getMapThumbnail(mapName);
+    if (thumbnailUrl) {
+        embed.setThumbnail(thumbnailUrl);
+    } else {
+        embed.addFields({ name: '`🗺️` Mapa', value: mapName, inline: true });
+    }
+
+    return embed;
 }
 
 function buildFinishedEmbed(playerNames, mapName, score, won, premadeStatsText = null, alertsLog = null) {
@@ -427,44 +485,68 @@ function buildFinishedEmbed(playerNames, mapName, score, won, premadeStatsText =
         titleText = `${resultIcon}・${resultText} — ${score.team1} - ${score.team2} para a equipa ${winnerName}`;
     }
 
-    let description = `A Premade terminou a partida!\n### Jogadores:\n${premadeStatsText || (playerNames + '\n\n🔄 *A carregar estatísticas...*')}`;
+    let description = `### Jogadores:\n${premadeStatsText || (playerNames + '\n\n🔄 *A carregar estatísticas...*')}`;
     if (alertsLog && alertsLog.length > 0) {
         description += `\n\n\`\`\`\n${alertsLog.join('\n')}\n\`\`\``;
     }
 
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
         .setTitle(titleText)
         .setColor(won === true ? '#57F287' : won === false ? '#ED4245' : '#313137')
         .setDescription(description)
         .addFields(
-            { name: '`🗺️` Mapa', value: mapName, inline: true },
             { name: '`📊` Resultado Final', value: scoreText, inline: true }
         )
         .setTimestamp();
+
+    const thumbnailUrl = getMapThumbnail(mapName);
+    if (thumbnailUrl) {
+        embed.setThumbnail(thumbnailUrl);
+    } else {
+        embed.addFields({ name: '`🗺️` Mapa', value: mapName, inline: true });
+    }
+
+    return embed;
 }
 
 function buildWarmupEmbed(playerNames, mapName) {
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
         .setTitle('🔥・Partida Encontrada!')
         .setColor('#FF5500')
-        .setDescription(`A Premade está em aquecimento!\n### Jogadores em campo:\n${playerNames}`)
+        .setDescription(`### Jogadores em campo:\n${playerNames}`)
         .addFields(
-            { name: '`🗺️` Mapa', value: mapName, inline: true },
             { name: '`🚦` Estado', value: '🔄 No aquecimento / Vetoes prontos', inline: true }
         )
         .setTimestamp();
+
+    const thumbnailUrl = getMapThumbnail(mapName);
+    if (thumbnailUrl) {
+        embed.setThumbnail(thumbnailUrl);
+    } else {
+        embed.addFields({ name: '`🗺️` Mapa', value: mapName, inline: true });
+    }
+
+    return embed;
 }
 
 function buildCancelledEmbed(playerNames, mapName, reason) {
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
         .setTitle('❌・Partida Cancelada')
         .setColor('#ED4245')
-        .setDescription(`A partida da Premade foi cancelada.\n### Jogadores:\n${playerNames}`)
+        .setDescription(`### Jogadores:\n${playerNames}`)
         .addFields(
-            { name: '`🗺️` Mapa', value: mapName, inline: true },
             { name: '`ℹ️` Motivo', value: reason || 'Jogadores não se ligaram a tempo ou partida abortada.', inline: true }
         )
         .setTimestamp();
+
+    const thumbnailUrl = getMapThumbnail(mapName);
+    if (thumbnailUrl) {
+        embed.setThumbnail(thumbnailUrl);
+    } else {
+        embed.addFields({ name: '`🗺️` Mapa', value: mapName, inline: true });
+    }
+
+    return embed;
 }
 
 function extractScore(matchData) {
@@ -557,9 +639,16 @@ function setupWebhooks(client) {
                     return;
                 }
 
-                const mapName = payload.entity?.name || 'Desconhecido';
+                let mapName = payload.entity?.name || 'Desconhecido';
+                // Tenta obter o mapa real da API logo no início
+                const matchData = await fetchMatchScore(matchId);
+                const apiMapName = extractMapName(matchData);
+                if (apiMapName) {
+                    mapName = apiMapName;
+                }
+
                 const matchUrl = `https://www.faceit.com/en/cs2/room/${matchId}`;
-                
+
                 const nicknames = premadeInMatch.map(p => p.nickname).join(', ');
                 const mapping = getPremadeMapping();
                 const playerNames = premadeInMatch.map(p => {
@@ -570,7 +659,7 @@ function setupWebhooks(client) {
 
                 console.log(`[Faceit Webhook] Partida em aquecimento (Ready): ${matchId} | Premade: ${nicknames}`);
 
-                const msg = await channel.send({ 
+                const msg = await channel.send({
                     embeds: [buildWarmupEmbed(playerNames, mapName)],
                     components: [buildMatchButtons(matchUrl, null)]
                 });
@@ -612,9 +701,18 @@ function setupWebhooks(client) {
                 // Se já estiver na memória (veio do ready), atualizamos a mensagem existente
                 if (active) {
                     console.log(`[Faceit Webhook] Partida live (Playing): ${matchId} | A atualizar mensagem existente.`);
-                    
+
                     if (active.intervalId) {
                         clearInterval(active.intervalId);
+                    }
+
+                    // Tenta obter o mapa real da API se ainda estiver genérico
+                    if (!active.mapName || active.mapName === 'Desconhecido' || active.mapName.toLowerCase().includes('5v5')) {
+                        const matchData = await fetchMatchScore(matchId);
+                        const apiMapName = extractMapName(matchData);
+                        if (apiMapName) {
+                            active.mapName = apiMapName;
+                        }
                     }
 
                     if (!active.premadeFaction) {
@@ -626,7 +724,7 @@ function setupWebhooks(client) {
                         active.alertsLog = [];
                     }
 
-                    await active.message.edit({ 
+                    await active.message.edit({
                         embeds: [buildPlayingEmbed(active.playerNames, active.mapName, null, active.alertsLog)],
                         components: [buildMatchButtons(active.matchUrl, null)]
                     });
@@ -681,9 +779,15 @@ function setupWebhooks(client) {
                     return;
                 }
 
-                const mapName = payload.entity?.name || 'Desconhecido';
+                let mapName = payload.entity?.name || 'Desconhecido';
+                // Tenta obter o mapa real da API logo no início (fallback)
+                const matchData = await fetchMatchScore(matchId);
+                const apiMapName = extractMapName(matchData);
+                if (apiMapName) {
+                    mapName = apiMapName;
+                }
                 const matchUrl = `https://www.faceit.com/en/cs2/room/${matchId}`;
-                
+
                 const nicknames = premadeInMatch.map(p => p.nickname).join(', ');
                 const mapping = getPremadeMapping();
                 const playerNames = premadeInMatch.map(p => {
@@ -694,7 +798,7 @@ function setupWebhooks(client) {
 
                 console.log(`[Faceit Webhook] Partida live (Playing - fallback): ${matchId} | Premade: ${nicknames}`);
 
-                const msg = await channel.send({ 
+                const msg = await channel.send({
                     embeds: [buildPlayingEmbed(playerNames, mapName, null, [])],
                     components: [buildMatchButtons(matchUrl, null)]
                 });
