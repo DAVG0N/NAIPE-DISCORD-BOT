@@ -417,7 +417,7 @@ async function updateFinishedEmbedWithStats(client, matchId) {
         let descriptionText = '';
         for (const pStats of premadePlayersStats) {
             const userMention = pStats.discordId ? `<@${pStats.discordId}>` : `**${pStats.nickname}**`;
-            descriptionText += `> ${userMention} **K/D/A:** \`${pStats.kills}/${pStats.deaths}/${pStats.assists}\`  |  **Rating:** \`${pStats.rating}\`\n\n`;
+            descriptionText += `> ${userMention} **K/D/A:** \`${pStats.kills}/${pStats.deaths}/${pStats.assists}\`  |  **Rating:** \`${pStats.rating}\`\n`;
         }
 
         active.premadeStatsText = descriptionText.trim();
